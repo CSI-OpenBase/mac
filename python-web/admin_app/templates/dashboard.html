@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% set active_page = "dashboard" %}
+{% set dashboard_stats = stats|default({}) %}
+{% block title %}总览{% endblock %}
+{% block page_title %}数据总览{% endblock %}
+{% block page_summary %}
+<p class="page-description">{{ scope_name|default(workspace.display_name|default('创作者工作区')) }} · 数据更新于 {{ updated_at_display|default('—') }}</p>
+{% endblock %}
+{% block page_actions %}
+<form method="post" action="/imports/sync" hx-post="/imports/sync" hx-swap="none" data-pending-label="同步中…">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+  <button class="button button-secondary" type="submit">
+    <i data-lucide="refresh-cw" aria-hidden="true"></i><span>同步数据库</span>
+  </button>
+</form>
+<form method="post" action="/analysis/run" hx-post="/analysis/run" hx-swap="none" data-pending-label="分析中…">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+  <button class="button button-primary" type="submit">
+    <i data-lucide="chart-no-axes-combined" aria-hidden="true"></i><span>更新分析</span>
+  </button>
+</form>
+{% endblock %}
+
+{% block content %}
+<section class="metric-grid" aria-label="关键指标">
+  <article class="metric-card metric-accent">
+    <div class="metric-label"><i data-lucide="clapperboard" aria-hidden="true"></i>可分析作品</div>
+    <div class="metric-value">{{ "{:,}".format(dashboard_stats.work_count|default(0)) }}</div>
+    <div class="metric-detail">来自创作者中心作品快照</div>
+  </article>
+  <article class="metric-card">
+    <div class="metric-label"><i data-lucide="play" aria-hidden="true"></i>作品播放</div>
+    <div class="metric-value">{{ "{:,}".format(dashboard_stats.total_views|default(0)) }}</div>
+    <div class="metric-detail">当前作品快照合计</div>
+  </article>
+  <article class="metric-card">
+    <div class="metric-label"><i data-lucide="message-circle" aria-hidden="true"></i>评论记录</div>
+    <div class="metric-value">{{ "{:,}".format(dashboard_stats.comment_count|default(0)) }}</div>
+    <div class="metric-detail">一级 {{ "{:,}".format(dashboard_stats.root_count|default(0)) }} · 回复 {{ "{:,}".format(dashboard_stats.reply_count|default(0)) }}</div>
+  </article>
+  <article class="metric-card">
+    <div class="metric-label"><i data-lucide="users-round" aria-hidden="true"></i>受众维度</div>
+    <div class="metric-value">{{ dashboard_stats.audience_dimensions|default(0) }}</div>
+    <div class="metric-detail">聚合画像，不保存观众身份</div>
+  </article>
+</section>
+
+<section class="section-block coverage-section">
+  <div class="section-heading">
+    <div>
+      <h2>采集覆盖</h2>
+      <p>{{ dashboard_stats.pending_videos|default(0) }} 条待采{% if dashboard_stats.partial_videos|default(0) %}，{{ dashboard_stats.partial_videos }} 条部分完成{% endif %}</p>
+    </div>
+    <a class="text-link" href="/videos?status=pending">查看待采视频<i data-lucide="arrow-right" aria-hidden="true"></i></a>
+  </div>
+  <div class="coverage-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ dashboard_stats.coverage_percent|default(0) }}">
+    <span style="width: {{ dashboard_stats.coverage_percent|default(0) }}%"></span>
+  </div>
+  <div class="coverage-legend">
+    <span><i class="legend-swatch legend-complete"></i>完成 {{ dashboard_stats.completed_videos|default(0) }}</span>
+    <span><i class="legend-swatch legend-partial"></i>部分 {{ dashboard_stats.partial_videos|default(0) }}</span>
+    <span><i class="legend-swatch legend-pending"></i>待采 {{ dashboard_stats.pending_videos|default(0) }}</span>
+    <span><i class="legend-swatch legend-blocked"></i>受阻 {{ dashboard_stats.blocked_videos|default(0) }}</span>
+  </div>
+</section>
+
+<section class="section-block">
+  <div class="section-heading">
+    <div>
+      <h2>下一批待采</h2>
+      <p>按当前优先级排列</p>
+    </div>
+  </div>
+  <div class="table-scroll">
+    <table class="data-table">
+      <thead>
+        <tr><th scope="col">视频</th><th scope="col">合集</th><th scope="col">参考量</th><th scope="col">状态</th><th scope="col" class="align-right">操作</th></tr>
+      </thead>
+      <tbody>
+        {% for video in next_videos|default([]) %}
+        <tr>
+          <td data-label="视频">
+            <a class="title-link clamp-2" href="/videos/{{ video.video_id }}">{{ video.title }}</a>
+            <code class="subtle-id">{{ video.video_id }}</code>
+          </td>
+          <td data-label="合集"><span>{{ video.collection_name|default('—') }}</span>{% if video.episode|default(none) %}<span class="cell-secondary">第 {{ video.episode }} 集</span>{% endif %}</td>
+          <td data-label="参考量">{{ video.card_metric|default('—') }}</td>
+          <td data-label="状态"><span class="status-badge status-{{ video.status|default('pending') }}"><span class="status-dot"></span>{{ '待采' if video.status|default('pending') == 'pending' else ('部分完成' if video.status == 'partial' else video.status) }}</span></td>
+          <td data-label="操作" class="align-right">
+            <form method="post" action="/videos/{{ video.video_id }}/collect">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+              <input type="hidden" name="job_type" value="collect_video">
+              <button class="button button-small button-secondary" type="submit"><i data-lucide="play" aria-hidden="true"></i><span>开始采集</span></button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr class="empty-row"><td colspan="5"><i data-lucide="circle-check" aria-hidden="true"></i><span>没有待采视频</span></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="section-block">
+  <div class="section-heading">
+    <div><h2>最近任务</h2><p>{{ dashboard_stats.running_jobs|default(0) }} 个正在运行</p></div>
+    <a class="text-link" href="/jobs">全部任务<i data-lucide="arrow-right" aria-hidden="true"></i></a>
+  </div>
+  <div id="jobs-table-region" hx-get="/partials/jobs?limit=5" hx-trigger="every 10s" hx-swap="innerHTML">
+    {% set jobs_status = '' %}
+    {% set jobs_sort = 'newest' %}
+    {% set jobs_page = 1 %}
+    {% set jobs_limit = 5 %}
+    {% include "partials/jobs_table.html" %}
+  </div>
+</section>
+
+<section class="section-block">
+  <div class="section-heading">
+    <div><h2>最近导入</h2><p>JSONL 与 MySQL 同步记录</p></div>
+    <a class="text-link" href="/imports">导入管理<i data-lucide="arrow-right" aria-hidden="true"></i></a>
+  </div>
+  <div class="table-scroll">
+    <table class="data-table compact-table">
+      <thead><tr><th scope="col">完成时间</th><th scope="col">来源</th><th scope="col">评论</th><th scope="col">新增快照</th><th scope="col">结果</th></tr></thead>
+      <tbody>
+      {% for run in recent_imports|default([]) %}
+        <tr>
+          <td data-label="完成时间"><time datetime="{{ run.completed_at|default('') }}">{{ run.completed_at_display|default('—') }}</time></td>
+          <td data-label="来源"><span class="file-name" title="{{ run.source_path|default('') }}">{{ run.source_name|default(run.source_path|default('—')) }}</span></td>
+          <td data-label="评论">{{ "{:,}".format(run.stored_comment_count|default(0)) }}</td>
+          <td data-label="新增快照">{{ "{:,}".format(run.inserted_snapshot_count|default(0)) }}</td>
+          <td data-label="结果"><span class="status-badge status-{{ run.status|default('success') }}"><span class="status-dot"></span>{{ '成功' if run.status|default('success') == 'success' else '失败' }}</span></td>
+        </tr>
+      {% else %}
+        <tr class="empty-row"><td colspan="5"><i data-lucide="database" aria-hidden="true"></i><span>暂无导入记录</span></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

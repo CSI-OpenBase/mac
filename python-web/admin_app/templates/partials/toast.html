@@ -1,0 +1,19 @@
+{% set notices = flashes|default([]) %}
+{% if flash|default(none) %}
+  {% set notices = [flash] %}
+{% endif %}
+{% if notices %}
+<div class="toast-region" aria-live="polite" aria-atomic="true">
+  {% for notice in notices %}
+  {% set notice_kind = notice.kind|default(notice.category|default('info')) %}
+  <div class="toast toast-{{ notice_kind }}" role="status" data-toast>
+    <i data-lucide="{{ 'circle-check' if notice_kind == 'success' else ('triangle-alert' if notice_kind in ['error', 'warning'] else 'info') }}" aria-hidden="true"></i>
+    <span>{{ notice.message|default(notice|string) }}</span>
+    <button type="button" class="toast-close icon-button" data-toast-close title="关闭">
+      <i data-lucide="x" aria-hidden="true"></i><span class="icon-fallback" aria-hidden="true">×</span>
+      <span class="sr-only">关闭</span>
+    </button>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}

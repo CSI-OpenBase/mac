@@ -1,14 +1,13 @@
 # CSI OpenBase for macOS
 
-这是 CSI OpenBase 的原生 macOS 主机。界面使用 SwiftUI，网页工作区使用
-WKWebView；创作者授权、表格导出、视频归档和评论采集仍由独立的 Python
-后端执行。macOS 项目不包含 CSI Core 的评分、权重、行业基准或商业报告逻辑。
+这是自包含的 CSI OpenBase macOS 项目。原生宿主使用 SwiftUI 和 WKWebView；
+仓库内的 `python-web/` 提供创作者授权、表格导出、视频归档、评论采集、持久化
+和本地 Web 界面。项目不包含 CSI Core 的评分、权重、行业基准或商业报告逻辑。
 
-正式仓库：[CSI-OpenBase/mac](https://github.com/CSI-OpenBase/mac)
+正式仓库：[cdsi-project/Beacon](https://github.com/cdsi-project/Beacon)
 
-SSH 克隆地址：`git@github.com:CSI-OpenBase/mac.git`
+SSH 克隆地址：`git@github.com:cdsi-project/Beacon.git`
 
-Python 后端维护在 [CSI-OpenBase/local-web](https://github.com/CSI-OpenBase/local-web)，
 Windows 主机维护在 [CSI-OpenBase/winform](https://github.com/CSI-OpenBase/winform)。
 
 ## 使用发行版
@@ -37,44 +36,40 @@ Windows 主机维护在 [CSI-OpenBase/winform](https://github.com/CSI-OpenBase/w
 仅在 Swift `DEBUG` 构建中，可以用环境变量指定开发后端：
 
 ```bash
-cd mac
-CSI_OPENBASE_BACKEND=/absolute/path/to/CSI.OpenBase.Backend \
-  swift run CSIOpenBaseMac
+python3 -m venv python-web/.venv
+python-web/.venv/bin/python -m pip install -e 'python-web[test]'
+python-web/.venv/bin/python -m playwright install chromium
+swift build
+PATH="$PWD/python-web/.venv/bin:$PATH" \
+  CSI_OPENBASE_BACKEND="$PWD/python-web/scripts/run_openbase.py" \
+  swift run --skip-build CSIOpenBaseMac
 ```
 
-`CSI_OPENBASE_BACKEND` 必须指向可执行文件（若使用 PyInstaller onedir，则指向
-目录内的同名主程序）。`CSI_OPENBASE_LAUNCHER` 可在 DEBUG 中覆盖 supervisor，
-通常无需设置；`swift run` 会使用同一构建目录中的 launcher。Release 构建会忽略
-这两个环境变量，只执行应用包内经过签名的后端和 supervisor。开发生成文件均位于
-`mac/.build`。
+仓库中的 `python-web/scripts/run_openbase.py` 已标记为可执行文件；上面的 `PATH`
+确保其使用 `python-web/.venv`。`CSI_OPENBASE_BACKEND` 也可以指向 PyInstaller
+onedir 内的同名主程序。`CSI_OPENBASE_LAUNCHER` 可在 DEBUG 中覆盖 supervisor，通常无需
+设置。Release 构建会忽略这两个环境变量，只执行应用包内经过签名的后端和
+supervisor。Swift 生成文件位于 `.build/`，Python 虚拟环境位于
+`python-web/.venv/`，两者都不会提交。
 
 ## 构建应用
 
-三个项目使用独立仓库：
-
-```bash
-git clone git@github.com:CSI-OpenBase/mac.git
-git clone git@github.com:CSI-OpenBase/local-web.git
-```
-
-如果将另行克隆的 `local-web` 放在相邻的 `../python` 目录，构建脚本会在
-`.build/backend-venv` 创建隔离环境，安装其 `.[desktop]` 依赖及 Playwright
-Chromium，再从已安装包入口生成 PyInstaller onedir 后端：
+仓库已包含完整的 `python-web/` 源码。构建脚本默认在 `.build/backend-venv`
+创建隔离环境，安装本地项目的 `.[desktop]` 依赖及 Playwright Chromium，再从
+已安装包入口生成 PyInstaller onedir 后端：
 
 ```bash
 chmod +x build_macos.sh
 ./build_macos.sh
 ```
 
-从独立 `mac` 仓库构建时，使用 `--python-project` 指向另行克隆的 `local-web`
-仓库，或使用 `--python-wheel` 传入其发布 wheel。
-
-可以改用另一个 Python 源码目录或已构建的 wheel；两种模式都会先安装到隔离
-环境再冻结，不会从源码目录直接导入：
+正常开发和发布不需要另一个源码仓库。迁移或 CI 场景仍可显式改用另一个 Python
+源码目录或已构建的 wheel；两种模式都会先安装到隔离环境再冻结，不会在发行版中
+依赖该输入路径：
 
 ```bash
-./build_macos.sh --python-project /absolute/path/to/python
-./build_macos.sh --python-wheel /absolute/path/to/csi_openbase-0.1.0-py3-none-any.whl
+./build_macos.sh --python-project /absolute/path/to/python-project
+./build_macos.sh --python-wheel /absolute/path/to/csi_openbase-0.0.10-py3-none-any.whl
 ```
 
 高级场景也可以跳过自动冻结，显式传入同架构的 macOS 后端。路径可以是
@@ -98,14 +93,12 @@ PyInstaller onedir 目录，也可以是单个 Mach-O 可执行文件。脚本�
 
 ```bash
 ./build_macos.sh \
-  --backend /absolute/path/to/CSI.OpenBase.Backend \
-  --backend-notices /absolute/path/to/backend-license-directory \
   --sign "Developer ID Application: Example Company (TEAMID)"
 ```
 
 脚本会把 mac 项目自身的 `LICENSE` 与 `NOTICE` 放入应用资源目录，并从隔离环境
-生成 `backend-licenses/python-packages.txt`、`CPython-LICENSE.txt` 以及已安装
-CSI OpenBase 包内的 `LICENSE`、`NOTICE`、`THIRD-PARTY-NOTICES.md` 及完整
+生成 `backend-licenses/python-packages.txt`、`CPython-LICENSE.txt` 以及已安装的
+`python-web` 包内 `LICENSE`、`NOTICE`、`THIRD-PARTY-NOTICES.md` 和完整
 `licenses/` 子树。报告只收录文本许可内容及包内相对路径，不复制二进制或本机构建
 绝对路径。使用 `--backend`
 时，`--backend-notices` 目录必须提供 `CPython-LICENSE.txt`、

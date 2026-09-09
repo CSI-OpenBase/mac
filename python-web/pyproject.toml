@@ -1,0 +1,67 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "csi-openbase"
+dynamic = ["version"]
+description = "Open-source, local-first creator data collection and baseline analysis for CSI"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = [
+    "LICENSE",
+    "NOTICE",
+    "THIRD-PARTY-NOTICES.md",
+    "licenses/*",
+]
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+]
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.18,<2",
+    "APScheduler>=3.11,<4",
+    "fastapi>=0.138,<1",
+    "itsdangerous>=2.2,<3",
+    "jinja2>=3.1,<4",
+    "openpyxl>=3.1,<4",
+    "playwright>=1.55,<2",
+    "PyMySQL>=1.2,<2",
+    "python-multipart>=0.0.20,<1",
+    "SQLAlchemy>=2.0,<2.1",
+    "tzdata>=2025.2",
+    "uvicorn[standard]>=0.35,<1",
+]
+
+[project.scripts]
+csi-openbase = "scripts.run_openbase:main"
+csi-openbase-dashboard = "scripts.run_dashboard:main"
+
+[project.optional-dependencies]
+test = [
+    "httpx>=0.28,<1",
+    "pytest>=8,<10",
+]
+desktop = [
+    "pyinstaller>=6.16,<7",
+]
+
+[tool.hatch.version]
+path = "VERSION"
+pattern = '^(?P<version>(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.[1-9][0-9])$'
+
+[tool.hatch.build.targets.wheel]
+packages = ["admin_app", "scripts"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"VERSION" = "admin_app/VERSION"
+"alembic.ini" = "admin_app/_migrations/alembic.ini"
+"migrations/env.py" = "admin_app/_migrations/migrations/env.py"
+"migrations/script.py.mako" = "admin_app/_migrations/migrations/script.py.mako"
+"migrations/resources/business-schema-v1.sql" = "admin_app/_migrations/migrations/resources/business-schema-v1.sql"
+"migrations/versions/20260906_0001_admin_tables.py" = "admin_app/_migrations/migrations/versions/20260906_0001_admin_tables.py"
+"migrations/versions/20260906_0002_business_schema.py" = "admin_app/_migrations/migrations/versions/20260906_0002_business_schema.py"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

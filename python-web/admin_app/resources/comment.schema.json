@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://open.aicsi.cn/schemas/comment-v1.json",
+  "title": "CSI OpenBase 评论快照规范",
+  "description": "一行 JSONL 对应一条去重后的评论或回复。默认不保存用户名、用户 ID、头像和属地。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "platform",
+    "comment_id",
+    "comment_id_kind",
+    "video_id",
+    "video_title",
+    "video_url",
+    "parent_comment_id",
+    "root_comment_id",
+    "comment_type",
+    "author_role",
+    "text",
+    "like_count",
+    "reply_count",
+    "published_at",
+    "published_label",
+    "collected_at",
+    "topic_ids",
+    "manual_tags",
+    "source_url",
+    "collection_batch"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "platform": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{1,31}$"
+    },
+    "comment_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "优先使用平台评论 ID；无法取得时由导入脚本生成 syn_ 前缀的稳定 ID。"
+    },
+    "comment_id_kind": {
+      "enum": ["platform", "synthetic"]
+    },
+    "video_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "video_title": {
+      "type": "string"
+    },
+    "video_url": {
+      "type": "string"
+    },
+    "parent_comment_id": {
+      "type": ["string", "null"],
+      "description": "一级评论为 null；回复必须指向同一视频中已落库的直接父评论。"
+    },
+    "root_comment_id": {
+      "type": ["string", "null"],
+      "description": "一级评论为 null；回复必须指向同一视频中的一级根评论。"
+    },
+    "comment_type": {
+      "enum": ["root", "reply"]
+    },
+    "author_role": {
+      "enum": ["viewer", "creator"],
+      "description": "只区分观众与账号作者，不保存观众身份。"
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1
+    },
+    "like_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "reply_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "页面声明的回复数；partial 采集允许高于当前已落库回复数。"
+    },
+    "published_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "published_label": {
+      "type": ["string", "null"],
+      "description": "页面展示的相对时间，例如 1天前、3月前；必须先去除属地文本。"
+    },
+    "collected_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "topic_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"
+      }
+    },
+    "manual_tags": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+      }
+    },
+    "source_url": {
+      "type": "string",
+      "description": "可直接定位评论时填写；否则留空字符串。"
+    },
+    "collection_batch": {
+      "type": "string",
+      "description": "采集批次名，例如 2026-09-06-core-01。"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"comment_type": {"const": "root"}},
+        "required": ["comment_type"]
+      },
+      "then": {
+        "properties": {
+          "parent_comment_id": {"type": "null"},
+          "root_comment_id": {"type": "null"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"comment_type": {"const": "reply"}},
+        "required": ["comment_type"]
+      },
+      "then": {
+        "properties": {
+          "parent_comment_id": {"type": "string", "minLength": 1},
+          "root_comment_id": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  ]
+}

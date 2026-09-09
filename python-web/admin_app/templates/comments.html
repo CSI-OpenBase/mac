@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% set active_page = "comments" %}
+{% set current_filters = filters|default({}) %}
+{% set comment_stats = stats|default({}) %}
+{% set pager = pagination|default({}) %}
+{% block title %}评论{% endblock %}
+{% block page_title %}评论查询{% endblock %}
+{% block page_summary %}<p class="page-description">{{ "{:,}".format(comment_stats.total|default(0)) }} 条记录 · 最近采集 {{ comment_stats.last_collected_display|default('—') }}</p>{% endblock %}
+
+{% block content %}
+<form class="filter-bar comments-filter" method="get" action="/comments">
+  <label class="field search-field wide-field">
+    <span class="field-label">评论搜索</span>
+    <span class="input-with-icon"><i data-lucide="search" aria-hidden="true"></i><input type="search" name="q" value="{{ current_filters.q|default('') }}" placeholder="评论正文"></span>
+  </label>
+  <label class="field">
+    <span class="field-label">视频</span>
+    <select name="video_id">
+      <option value="">全部视频</option>
+      {% for video in video_options|default([]) %}<option value="{{ video.video_id }}" {{ 'selected' if current_filters.video_id|default('') == video.video_id|string else '' }}>{{ video.short_title|default(video.title|truncate(36, True, '…')) }}</option>{% endfor %}
+    </select>
+  </label>
+  <label class="field">
+    <span class="field-label">角色</span>
+    <select name="author_role"><option value="">全部角色</option><option value="viewer" {{ 'selected' if current_filters.author_role|default('') == 'viewer' else '' }}>观众</option><option value="creator" {{ 'selected' if current_filters.author_role|default('') == 'creator' else '' }}>作者</option></select>
+  </label>
+  <label class="field">
+    <span class="field-label">类型</span>
+    <select name="comment_type"><option value="">全部类型</option><option value="root" {{ 'selected' if current_filters.comment_type|default('') == 'root' else '' }}>一级评论</option><option value="reply" {{ 'selected' if current_filters.comment_type|default('') == 'reply' else '' }}>回复</option></select>
+  </label>
+  <label class="field">
+    <span class="field-label">排序</span>
+    <select name="sort"><option value="collected_desc" {{ 'selected' if current_filters.sort|default('collected_desc') == 'collected_desc' else '' }}>最近采集</option><option value="likes_desc" {{ 'selected' if current_filters.sort|default('') == 'likes_desc' else '' }}>点赞最多</option><option value="replies_desc" {{ 'selected' if current_filters.sort|default('') == 'replies_desc' else '' }}>回复最多</option><option value="published_desc" {{ 'selected' if current_filters.sort|default('') == 'published_desc' else '' }}>发布时间</option></select>
+  </label>
+  <div class="filter-actions">
+    <button class="button button-secondary" type="submit"><i data-lucide="list-filter" aria-hidden="true"></i><span>筛选</span></button>
+    {% if current_filters.q|default('') or current_filters.video_id|default('') or current_filters.author_role|default('') or current_filters.comment_type|default('') %}<a class="button button-quiet" href="/comments">清除</a>{% endif %}
+  </div>
+</form>
+
+<div class="active-filter-row">
+  <span>{{ pager.total_items|default(comment_stats.total|default(0)) }} 条结果</span>
+  {% if current_filters.q|default('') %}<span class="filter-chip">“{{ current_filters.q|truncate(28, True, '…') }}”</span>{% endif %}
+  {% if current_filters.author_role|default('') %}<span class="filter-chip">{{ '作者' if current_filters.author_role == 'creator' else '观众' }}</span>{% endif %}
+  {% if current_filters.comment_type|default('') %}<span class="filter-chip">{{ '一级评论' if current_filters.comment_type == 'root' else '回复' }}</span>{% endif %}
+</div>
+
+<section class="section-block section-flush">
+  <div class="comment-results">
+  {% for comment in comments|default([]) %}
+    <article class="comment-result">
+      <header>
+        <div class="comment-badges">
+          <span class="role-badge role-{{ comment.author_role|default('viewer') }}">{{ '作者' if comment.author_role|default('viewer') == 'creator' else '观众' }}</span>
+          <span class="type-badge">{{ '一级评论' if comment.comment_type|default('root') == 'root' else '回复' }}</span>
+        </div>
+        <time datetime="{{ comment.published_at|default('') }}">{{ comment.published_display|default(comment.published_label|default('时间未知')) }}</time>
+      </header>
+      <a class="comment-result-body" href="/comments/{{ comment.root_comment_id|default(comment.comment_id, true) }}">
+        <p class="comment-text">{% if current_filters.q|default('') and comment.text_html|default('') %}{{ comment.text_html|safe }}{% else %}{{ comment.text }}{% endif %}</p>
+      </a>
+      <footer>
+        <a class="video-context clamp-1" href="/videos/{{ comment.video_id }}"><i data-lucide="clapperboard" aria-hidden="true"></i>{{ comment.video_title|default(comment.video_id) }}</a>
+        <div class="comment-metrics"><span title="点赞"><i data-lucide="thumbs-up" aria-hidden="true"></i>{{ comment.like_count|default(0) }}</span><span title="回复"><i data-lucide="message-square-reply" aria-hidden="true"></i>{{ comment.reply_count|default(0) }}</span><code>{{ comment.comment_id }}</code></div>
+      </footer>
+    </article>
+  {% else %}
+    <div class="empty-state large-empty"><i data-lucide="search-x" aria-hidden="true"></i><strong>没有符合条件的评论</strong></div>
+  {% endfor %}
+  </div>
+  {% include "partials/pagination.html" ignore missing %}
+</section>
+{% endblock %}

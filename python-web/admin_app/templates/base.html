@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="csrf-token" content="{{ csrf_token|default('') }}">
+  <title>{% block title %}工作台{% endblock %} · CSI OpenBase</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
+  <script defer src="{{ url_for('static', path='vendor/htmx.min.js') }}"></script>
+  <script defer src="{{ url_for('static', path='vendor/lucide.min.js') }}"></script>
+  <script defer src="{{ url_for('static', path='app.js') }}"></script>
+</head>
+{% set active_page = active_page|default('dashboard') %}
+<body>
+  <a class="skip-link" href="#main-content">跳到主要内容</a>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="CSI OpenBase 首页">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>
+          <strong>CSI OpenBase</strong>
+          <small>{{ workspace.display_name|default('创作者工作区') }}</small>
+        </span>
+      </a>
+      <div class="topbar-meta">
+        <span class="db-state {{ 'is-online' if db_connected|default(true) else 'is-offline' }}">
+          <span aria-hidden="true"></span>
+          {{ 'MySQL 已连接' if db_connected|default(true) else 'MySQL 未连接' }}
+        </span>
+        <button class="icon-button mobile-nav-toggle" type="button" data-nav-toggle aria-expanded="false" aria-controls="primary-nav" title="打开导航">
+          <i data-lucide="menu" aria-hidden="true"></i><span class="icon-fallback" aria-hidden="true">☰</span>
+          <span class="sr-only">打开导航</span>
+        </button>
+      </div>
+    </header>
+
+    <aside class="sidebar" id="primary-nav" data-primary-nav>
+      <nav class="nav-list" aria-label="主要导航">
+        <a href="/" class="nav-link {{ 'is-active' if active_page == 'dashboard' else '' }}" {% if active_page == 'dashboard' %}aria-current="page"{% endif %}>
+          <i data-lucide="layout-dashboard" aria-hidden="true"></i><span>总览</span>
+        </a>
+        <a href="/videos" class="nav-link {{ 'is-active' if active_page == 'videos' else '' }}" {% if active_page == 'videos' %}aria-current="page"{% endif %}>
+          <i data-lucide="clapperboard" aria-hidden="true"></i><span>视频</span>
+        </a>
+        <a href="/comments" class="nav-link {{ 'is-active' if active_page == 'comments' else '' }}" {% if active_page == 'comments' %}aria-current="page"{% endif %}>
+          <i data-lucide="messages-square" aria-hidden="true"></i><span>评论</span>
+        </a>
+        <a href="/analysis" class="nav-link {{ 'is-active' if active_page == 'analysis' else '' }}" {% if active_page == 'analysis' %}aria-current="page"{% endif %}>
+          <i data-lucide="chart-no-axes-combined" aria-hidden="true"></i><span>账号分析</span>
+        </a>
+        <a href="/jobs" class="nav-link {{ 'is-active' if active_page == 'jobs' else '' }}" {% if active_page == 'jobs' %}aria-current="page"{% endif %}>
+          <i data-lucide="list-checks" aria-hidden="true"></i><span>采集任务</span>
+          {% if nav_running_jobs|default(0) %}<span class="nav-count">{{ nav_running_jobs }}</span>{% endif %}
+        </a>
+        <a href="/imports" class="nav-link {{ 'is-active' if active_page == 'imports' else '' }}" {% if active_page == 'imports' %}aria-current="page"{% endif %}>
+          <i data-lucide="database" aria-hidden="true"></i><span>数据导入</span>
+        </a>
+      </nav>
+      <div class="sidebar-footer">
+        <span>{{ workspace.platform|default('douyin') }} · 仅本机 · v{{ app_version }}</span>
+        <code>{{ workspace.slug|default('default') }}</code>
+      </div>
+    </aside>
+
+    <main class="main-content" id="main-content" tabindex="-1">
+      {% include "partials/toast.html" %}
+      <div class="page-heading">
+        <div>
+          {% block eyebrow %}{% endblock %}
+          <h1>{% block page_title %}总览{% endblock %}</h1>
+          {% block page_summary %}{% endblock %}
+        </div>
+        <div class="page-actions">{% block page_actions %}{% endblock %}</div>
+      </div>
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</body>
+</html>

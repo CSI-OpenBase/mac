@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://open.aicsi.cn/schemas/work-snapshot-v1.json",
+  "title": "CSI OpenBase 作品表现快照",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "platform", "work_id", "work_id_kind", "title", "tags",
+    "published_at", "content_type", "audit_status", "view_count", "like_count",
+    "share_count", "comment_count", "collect_count", "profile_visit_count",
+    "follower_gain", "completion_rate", "five_second_completion_rate",
+    "cover_click_rate", "two_second_bounce_rate", "average_watch_seconds",
+    "observed_at", "source_file", "source_sheet"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "platform": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{1,31}$"},
+    "work_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "work_id_kind": {"enum": ["platform", "synthetic"]},
+    "title": {"type": "string", "minLength": 1},
+    "tags": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+    "published_at": {"type": ["string", "null"], "format": "date-time"},
+    "content_type": {"type": "string"},
+    "audit_status": {"type": "string"},
+    "view_count": {"type": "integer", "minimum": 0},
+    "like_count": {"type": "integer", "minimum": 0},
+    "share_count": {"type": "integer", "minimum": 0},
+    "comment_count": {"type": "integer", "minimum": 0},
+    "collect_count": {"type": "integer", "minimum": 0},
+    "profile_visit_count": {"type": "integer", "minimum": 0},
+    "follower_gain": {"type": "integer", "minimum": 0},
+    "completion_rate": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "five_second_completion_rate": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "cover_click_rate": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "two_second_bounce_rate": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "average_watch_seconds": {"type": ["number", "null"], "minimum": 0},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "source_file": {"type": "string"},
+    "source_sheet": {"type": "string"}
+  }
+}

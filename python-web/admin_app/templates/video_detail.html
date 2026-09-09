@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% set active_page = "videos" %}
+{% set item = video|default({}) %}
+{% set detail_stats = stats|default({}) %}
+{% set video_status = item.status|default('pending') %}
+{% block title %}{{ item.title|default('视频详情') }}{% endblock %}
+{% block eyebrow %}<a class="back-link" href="/videos"><i data-lucide="arrow-left" aria-hidden="true"></i>视频列表</a>{% endblock %}
+{% block page_title %}{{ item.title|default('视频详情') }}{% endblock %}
+{% block page_summary %}
+<div class="page-description detail-meta-line">
+  <code>{{ item.video_id|default('—') }}</code>
+  <span aria-hidden="true">·</span>
+  <span>{{ item.collection_name|default('未归类') }}{% if item.episode|default(none) %} · 第 {{ item.episode }} 集{% endif %}</span>
+  {% if item.video_url|default('') %}<a href="{{ item.video_url }}" target="_blank" rel="noopener noreferrer">抖音原页<i data-lucide="external-link" aria-hidden="true"></i></a>{% endif %}
+</div>
+{% endblock %}
+{% block page_actions %}
+<form method="post" action="/videos/{{ item.video_id|default('') }}/collect">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+  <input type="hidden" name="job_type" value="collect_video">
+  <button class="button button-primary" type="submit"><i data-lucide="play" aria-hidden="true"></i><span>{{ '重新采集' if video_status == 'complete' else '开始采集' }}</span></button>
+</form>
+{% endblock %}
+
+{% block content %}
+<section class="metric-grid metric-grid-small" aria-label="视频评论指标">
+  <article class="metric-card"><div class="metric-label">当前状态</div><div class="metric-status"><span class="status-badge status-{{ video_status }}"><span class="status-dot"></span>{% if video_status == 'pending' %}待采{% elif video_status == 'partial' %}部分完成{% elif video_status == 'complete' %}已完成{% elif video_status == 'blocked' %}受阻{% else %}{{ video_status }}{% endif %}</span></div><div class="metric-detail">{{ item.last_collected_display|default('尚未采集') }}</div></article>
+  <article class="metric-card"><div class="metric-label">评论记录</div><div class="metric-value">{{ "{:,}".format(detail_stats.comment_count|default(item.stored_record_count|default(0))) }}</div><div class="metric-detail">页面可见 {{ "{:,}".format(item.visible_comment_count|default(0)) }}</div></article>
+  <article class="metric-card"><div class="metric-label">一级 / 回复</div><div class="metric-value paired-value"><span>{{ "{:,}".format(detail_stats.root_count|default(0)) }}</span><small>/</small><span>{{ "{:,}".format(detail_stats.reply_count|default(0)) }}</span></div><div class="metric-detail">楼中楼结构</div></article>
+  <article class="metric-card"><div class="metric-label">作者发言</div><div class="metric-value">{{ "{:,}".format(detail_stats.creator_count|default(0)) }}</div><div class="metric-detail">快照 {{ "{:,}".format(detail_stats.snapshot_count|default(0)) }}</div></article>
+</section>
+
+<div class="detail-layout">
+  <section class="section-block detail-main">
+    <div class="section-heading">
+      <div><h2>评论楼层</h2><p>按互动量展示一级评论</p></div>
+      <a class="text-link" href="/comments?video_id={{ item.video_id|default('') }}">全部评论<i data-lucide="arrow-right" aria-hidden="true"></i></a>
+    </div>
+    <div class="thread-list">
+    {% for comment in comments|default([]) %}
+      <article class="comment-row">
+        <div class="comment-row-head">
+          <span class="role-badge role-{{ comment.author_role|default('viewer') }}">{{ '作者' if comment.author_role|default('viewer') == 'creator' else '观众' }}</span>
+          <time datetime="{{ comment.published_at|default('') }}">{{ comment.published_display|default(comment.published_label|default('时间未知')) }}</time>
+          <code>{{ comment.comment_id }}</code>
+        </div>
+        <p class="comment-text">{{ comment.text }}</p>
+        <div class="comment-row-foot">
+          <span><i data-lucide="thumbs-up" aria-hidden="true"></i>{{ comment.like_count|default(0) }}</span>
+          <span><i data-lucide="message-square-reply" aria-hidden="true"></i>{{ comment.reply_count|default(0) }}</span>
+          <a href="/comments/{{ comment.comment_id }}">查看楼层<i data-lucide="chevron-right" aria-hidden="true"></i></a>
+        </div>
+      </article>
+    {% else %}
+      <div class="empty-state"><i data-lucide="messages-square" aria-hidden="true"></i><strong>暂无评论</strong></div>
+    {% endfor %}
+    </div>
+  </section>
+
+  <aside class="detail-side">
+    <section class="section-block">
+      <div class="section-heading"><div><h2>采集状态</h2><p>最近一批记录</p></div></div>
+      <dl class="definition-list">
+        <div><dt>批次</dt><dd><code>{{ item.last_batch|default('—') }}</code></dd></div>
+        <div><dt>最近采集</dt><dd>{{ item.last_collected_display|default('—') }}</dd></div>
+        <div><dt>参考量</dt><dd>{{ item.card_metric|default('—') }}</dd></div>
+      </dl>
+      {% if item.notes|default('') %}<p class="record-note">{{ item.notes }}</p>{% endif %}
+      <form class="inline-control-form" method="post" action="/videos/{{ item.video_id|default('') }}/status">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+        <label class="field"><span class="field-label">状态</span><select name="status"><option value="pending" {{ 'selected' if video_status == 'pending' else '' }}>待采</option><option value="partial" {{ 'selected' if video_status == 'partial' else '' }}>部分完成</option><option value="complete" {{ 'selected' if video_status == 'complete' else '' }}>已完成</option><option value="blocked" {{ 'selected' if video_status == 'blocked' else '' }}>受阻</option></select></label>
+        <button class="button button-secondary button-full" type="submit"><i data-lucide="save" aria-hidden="true"></i><span>保存状态</span></button>
+      </form>
+    </section>
+
+    <section class="section-block">
+      <div class="section-heading"><div><h2>任务记录</h2><p>{{ collection_history|default([])|length }} 条</p></div></div>
+      <ol class="timeline">
+      {% for event in collection_history|default([]) %}
+        <li>
+          <span class="timeline-marker status-{{ event.status|default('complete') }}" aria-hidden="true"></span>
+          <div><strong>{{ event.status_label|default('当前状态') }}</strong><time datetime="{{ event.collected_at|default('') }}">{{ event.collected_at_display|default('—') }}</time><p>{{ event.record_count|default(0) }} 条记录{% if event.batch|default('') %} · {{ event.batch }}{% endif %}</p></div>
+        </li>
+      {% else %}
+        <li class="timeline-empty"><span class="timeline-marker"></span><div><strong>暂无任务记录</strong></div></li>
+      {% endfor %}
+      </ol>
+    </section>
+  </aside>
+</div>
+{% endblock %}

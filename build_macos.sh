@@ -121,17 +121,16 @@ for path in LICENSE NOTICE Packaging/Info.plist Packaging/backend_entry.py \
 done
 
 INPUT_MODE=""
-PYTHON_PROJECT_SOURCE="$PROJECT_DIR/../python"
+PYTHON_PROJECT_SOURCE="$PROJECT_DIR/python-web"
 PYTHON_WHEEL_SOURCE=""
 BACKEND_SOURCE=""
 BACKEND_NOTICES_SOURCE=""
-ENV_BACKEND_SOURCE="${CSI_OPENBASE_BACKEND_BINARY:-}"
 SIGNING_ID="${SIGNING_IDENTITY:-}"
 PYTHON_COMMAND="${PYTHON_BIN:-python3}"
 
 usage() {
     echo "Usage: ./build_macos.sh [INPUT] [--sign IDENTITY]"
-    echo "  --python-project PATH  Freeze a Python project (default: ../python)"
+    echo "  --python-project PATH  Freeze a Python project (default: ./python-web)"
     echo "  --python-wheel PATH    Freeze an installed csi-openbase wheel"
     echo "  --backend PATH         Advanced prebuilt macOS backend override"
     echo "  --backend-notices DIR  Attribution directory required by --backend"
@@ -167,12 +166,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$INPUT_MODE" ]]; then
-    if [[ -n "$ENV_BACKEND_SOURCE" ]]; then
-        INPUT_MODE=backend
-        BACKEND_SOURCE="$ENV_BACKEND_SOURCE"
-    else
-        INPUT_MODE=python-project
-    fi
+    INPUT_MODE=python-project
 fi
 [[ "$INPUT_MODE" == backend || -z "$BACKEND_NOTICES_SOURCE" ]] \
     || fail "--backend-notices may only be used with --backend."
@@ -281,7 +275,7 @@ if [[ "$PREBUILT_BACKEND" -eq 0 ]]; then
     "$VENV_PYTHON" -m pip install --upgrade pip
     "$VENV_PYTHON" -m pip install "${PYTHON_INSTALL_SOURCE}[desktop]"
 
-    INSTALLED_ENTRY="$("$VENV_PYTHON" -c \
+    INSTALLED_ENTRY="$("$VENV_PYTHON" -I -c \
         'import pathlib, scripts.run_openbase as e; print(pathlib.Path(e.__file__).resolve())')"
     case "$INSTALLED_ENTRY" in
         "$VENV"/*) ;;

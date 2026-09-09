@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "themes": [
+    {
+      "id": "low-speed",
+      "label": "低速场景",
+      "keywords": ["低速", "极低速"]
+    },
+    {
+      "id": "traffic",
+      "label": "拥堵通勤",
+      "keywords": ["堵车", "拥堵", "跟车"]
+    },
+    {
+      "id": "manual-mode",
+      "label": "手动模式",
+      "keywords": ["M挡", "M档", "手动模式"]
+    },
+    {
+      "id": "mechanical-state",
+      "label": "机械状态",
+      "keywords": ["半联动", "磨损"]
+    }
+  ]
+}

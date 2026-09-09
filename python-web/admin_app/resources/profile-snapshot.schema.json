@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://open.aicsi.cn/schemas/profile-snapshot-v1.json",
+  "title": "CSI OpenBase 创作者账号快照",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "platform", "observed_at", "display_name", "follower_count", "following_count", "total_like_count", "work_count"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "platform": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{1,31}$"},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "display_name": {"type": "string", "maxLength": 120},
+    "follower_count": {"type": "integer", "minimum": 0},
+    "following_count": {"type": "integer", "minimum": 0},
+    "total_like_count": {"type": "integer", "minimum": 0},
+    "work_count": {"type": "integer", "minimum": 0}
+  }
+}

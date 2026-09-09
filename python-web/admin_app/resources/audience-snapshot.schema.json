@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://open.aicsi.cn/schemas/audience-snapshot-v1.json",
+  "title": "CSI OpenBase 聚合受众画像快照",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "platform", "observed_at", "dimension", "segment", "share", "sample_size"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "platform": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{1,31}$"},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "dimension": {"type": "string", "minLength": 1, "maxLength": 64},
+    "segment": {"type": "string", "minLength": 1, "maxLength": 120},
+    "share": {"type": "number", "minimum": 0, "maximum": 1},
+    "sample_size": {"type": ["integer", "null"], "minimum": 0}
+  }
+}

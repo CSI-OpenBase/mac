@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% set active_page = "videos" %}
+{% set current_filters = filters|default({}) %}
+{% set video_stats = stats|default({}) %}
+{% set pager = pagination|default({}) %}
+{% block title %}视频{% endblock %}
+{% block page_title %}视频采集{% endblock %}
+{% block page_summary %}<p class="page-description">{{ video_stats.total|default(0) }} 条目标视频 · {{ video_stats.complete|default(0) }} 条已完成</p>{% endblock %}
+{% block page_actions %}
+<button class="button button-primary" type="submit" form="bulk-job-form">
+  <i data-lucide="play" aria-hidden="true"></i><span>采集已选视频</span>
+</button>
+{% endblock %}
+
+{% block content %}
+<form class="filter-bar" method="get" action="/videos">
+  <label class="field search-field">
+    <span class="field-label">搜索</span>
+    <span class="input-with-icon"><i data-lucide="search" aria-hidden="true"></i><input type="search" name="q" value="{{ current_filters.q|default('') }}" placeholder="标题或视频 ID"></span>
+  </label>
+  <label class="field">
+    <span class="field-label">状态</span>
+    <select name="status">
+      <option value="">全部状态</option>
+      <option value="pending" {{ 'selected' if current_filters.status|default('') == 'pending' else '' }}>待采</option>
+      <option value="partial" {{ 'selected' if current_filters.status|default('') == 'partial' else '' }}>部分完成</option>
+      <option value="complete" {{ 'selected' if current_filters.status|default('') == 'complete' else '' }}>已完成</option>
+      <option value="blocked" {{ 'selected' if current_filters.status|default('') == 'blocked' else '' }}>受阻</option>
+    </select>
+  </label>
+  <label class="field">
+    <span class="field-label">合集</span>
+    <select name="collection_id">
+      <option value="">全部合集</option>
+      {% for collection in collections|default([]) %}
+      <option value="{{ collection.collection_id }}" {{ 'selected' if current_filters.collection_id|default('') == collection.collection_id|string else '' }}>{{ collection.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label class="field">
+    <span class="field-label">排序</span>
+    <select name="sort">
+      <option value="priority" {{ 'selected' if current_filters.sort|default('priority') == 'priority' else '' }}>采集优先级</option>
+      <option value="episode" {{ 'selected' if current_filters.sort|default('') == 'episode' else '' }}>合集顺序</option>
+      <option value="comments_desc" {{ 'selected' if current_filters.sort|default('') == 'comments_desc' else '' }}>评论数从高到低</option>
+      <option value="updated_desc" {{ 'selected' if current_filters.sort|default('') == 'updated_desc' else '' }}>最近采集</option>
+    </select>
+  </label>
+  <div class="filter-actions">
+    <button class="button button-secondary" type="submit"><i data-lucide="list-filter" aria-hidden="true"></i><span>筛选</span></button>
+    {% if current_filters.q|default('') or current_filters.status|default('') or current_filters.collection_id|default('') %}<a class="button button-quiet" href="/videos">清除</a>{% endif %}
+  </div>
+</form>
+
+<div class="status-summary" aria-label="视频状态汇总">
+  <a href="/videos" class="summary-item {{ 'is-active' if not current_filters.status|default('') else '' }}"><strong>{{ video_stats.total|default(0) }}</strong><span>全部</span></a>
+  <a href="/videos?status=pending" class="summary-item {{ 'is-active' if current_filters.status|default('') == 'pending' else '' }}"><strong>{{ video_stats.pending|default(0) }}</strong><span>待采</span></a>
+  <a href="/videos?status=partial" class="summary-item {{ 'is-active' if current_filters.status|default('') == 'partial' else '' }}"><strong>{{ video_stats.partial|default(0) }}</strong><span>部分完成</span></a>
+  <a href="/videos?status=complete" class="summary-item {{ 'is-active' if current_filters.status|default('') == 'complete' else '' }}"><strong>{{ video_stats.complete|default(0) }}</strong><span>已完成</span></a>
+  <a href="/videos?status=blocked" class="summary-item {{ 'is-active' if current_filters.status|default('') == 'blocked' else '' }}"><strong>{{ video_stats.blocked|default(0) }}</strong><span>受阻</span></a>
+</div>
+
+<form id="bulk-job-form" method="post" action="/jobs">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+  <input type="hidden" name="job_type" value="collect_video">
+</form>
+
+<section class="section-block section-flush">
+  <div class="table-toolbar">
+    <label class="checkbox-label"><input type="checkbox" data-select-all="video-selection"><span>全选本页</span></label>
+    <span class="muted">共 {{ pager.total_items|default(video_stats.total|default(0)) }} 条</span>
+  </div>
+  <div class="table-scroll">
+    <table class="data-table video-table">
+      <thead>
+        <tr><th class="select-cell"><span class="sr-only">选择</span></th><th scope="col">视频</th><th scope="col">合集</th><th scope="col">采集状态</th><th scope="col">已存评论</th><th scope="col">最近采集</th><th scope="col" class="align-right">操作</th></tr>
+      </thead>
+      <tbody>
+      {% for video in videos|default([]) %}
+        {% set video_status = video.status|default('pending') %}
+        <tr>
+          <td class="select-cell"><input type="checkbox" name="video_id" value="{{ video.video_id }}" form="bulk-job-form" data-select-group="video-selection" aria-label="选择 {{ video.title }}"></td>
+          <td data-label="视频">
+            <a class="title-link clamp-2" href="/videos/{{ video.video_id }}">{{ video.title }}</a>
+            <code class="subtle-id">{{ video.video_id }}</code>
+          </td>
+          <td data-label="合集"><span>{{ video.collection_name|default('—') }}</span>{% if video.episode|default(none) %}<span class="cell-secondary">第 {{ video.episode }} 集</span>{% endif %}</td>
+          <td data-label="采集状态"><span class="status-badge status-{{ video_status }}"><span class="status-dot"></span>{% if video_status == 'pending' %}待采{% elif video_status == 'partial' %}部分完成{% elif video_status == 'complete' %}已完成{% elif video_status == 'blocked' %}受阻{% else %}{{ video_status }}{% endif %}</span></td>
+          <td data-label="已存评论"><strong>{{ "{:,}".format(video.stored_record_count|default(0)) }}</strong>{% if video.visible_comment_count|default(0) != video.stored_record_count|default(0) %}<span class="cell-secondary">页面 {{ video.visible_comment_count|default(0) }}</span>{% endif %}</td>
+          <td data-label="最近采集"><time datetime="{{ video.last_collected_at|default('') }}">{{ video.last_collected_display|default('—') }}</time></td>
+          <td data-label="操作" class="align-right row-actions">
+            <a class="icon-button" href="/videos/{{ video.video_id }}" title="查看视频详情"><i data-lucide="eye" aria-hidden="true"></i><span class="sr-only">查看详情</span></a>
+            <form method="post" action="/videos/{{ video.video_id }}/collect">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+              <input type="hidden" name="job_type" value="collect_video">
+              <button class="icon-button" type="submit" title="创建采集任务"><i data-lucide="play" aria-hidden="true"></i><span class="sr-only">创建采集任务</span></button>
+            </form>
+          </td>
+        </tr>
+      {% else %}
+        <tr class="empty-row"><td colspan="7"><i data-lucide="search-x" aria-hidden="true"></i><span>没有符合条件的视频</span></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% include "partials/pagination.html" ignore missing %}
+</section>
+{% endblock %}

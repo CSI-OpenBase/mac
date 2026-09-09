@@ -1,0 +1,81 @@
+{% set job_rows = jobs|default([]) %}
+{% set table_status = jobs_status|default('') %}
+{% set table_sort = jobs_sort|default('newest') %}
+{% set table_page = jobs_page|default(1) %}
+{% set table_limit = jobs_limit|default(25) %}
+<div class="table-scroll">
+  <table class="data-table jobs-table">
+    <thead>
+      <tr>
+        <th scope="col">任务</th>
+        <th scope="col">视频</th>
+        <th scope="col">状态</th>
+        <th scope="col">进度</th>
+        <th scope="col">计划 / 启动</th>
+        <th scope="col" class="align-right">操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for job in job_rows %}
+      {% set job_status = job.status|default('queued') %}
+      <tr>
+        <td data-label="任务">
+          <div class="cell-primary">#{{ job.id|default(job.job_id|default('—')) }}</div>
+          <div class="cell-secondary">{{ job.type_label|default('评论采集' if job.job_type|default('collect_video') == 'collect_video' else ('数据库同步' if job.job_type == 'sync_mysql' else ('评论分析' if job.job_type == 'analyze' else job.job_type))) }}</div>
+        </td>
+        <td data-label="视频">
+          {% if job.video_id|default('') %}
+          <a class="title-link clamp-2" href="/videos/{{ job.video_id }}">{{ job.video_title|default(job.video_id) }}</a>
+          <code class="subtle-id">{{ job.video_id }}</code>
+          {% else %}
+          <span class="muted">全部待采视频</span>
+          {% endif %}
+        </td>
+        <td data-label="状态">
+          <span class="status-badge status-{{ job_status }}">
+            <span class="status-dot" aria-hidden="true"></span>
+            {% if job_status == 'queued' %}等待中{% elif job_status == 'running' %}采集中{% elif job_status in ['success', 'succeeded'] %}已完成{% elif job_status == 'failed' %}失败{% elif job_status == 'blocked' %}受阻{% elif job_status == 'cancelled' %}已取消{% else %}{{ job_status }}{% endif %}
+          </span>
+          {% if job.message|default('') %}<div class="cell-note clamp-2" title="{{ job.message }}">{{ job.message }}</div>{% endif %}
+        </td>
+        <td data-label="进度">
+          {% set progress = job.progress_percent|default(0) %}
+          <div class="progress-inline">
+            <progress value="{{ progress }}" max="100">{{ progress }}%</progress>
+            <span>{{ progress }}%</span>
+          </div>
+          {% if job.processed_count|default(none) is not none %}
+          <div class="cell-secondary">{{ job.processed_count|default(0) }} / {{ job.total_count|default(0) }}</div>
+          {% endif %}
+        </td>
+        <td data-label="计划 / 启动">
+          <time datetime="{{ job.scheduled_for|default(job.started_at|default('')) }}">{{ job.time_display|default(job.scheduled_for_display|default(job.started_at_display|default('—'))) }}</time>
+          {% if job.finished_at_display|default('') %}<div class="cell-secondary">完成 {{ job.finished_at_display }}</div>{% endif %}
+        </td>
+        <td data-label="操作" class="align-right">
+          {% if job_status == 'queued' %}
+          <form method="post" action="/jobs/{{ job.id|default(job.job_id) }}/cancel?status={{ table_status|urlencode }}&amp;page={{ table_page }}&amp;limit={{ table_limit }}"
+                hx-post="/jobs/{{ job.id|default(job.job_id) }}/cancel?status={{ table_status|urlencode }}&amp;sort={{ table_sort|urlencode }}&amp;page={{ table_page }}&amp;limit={{ table_limit }}"
+                hx-target="#jobs-table-region" hx-swap="innerHTML"
+                data-confirm="确定取消该采集任务？">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+            <button class="button button-quiet button-small" type="submit">
+              <i data-lucide="square" aria-hidden="true"></i><span>取消</span>
+            </button>
+          </form>
+          {% else %}
+          <span class="muted">—</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr class="empty-row">
+        <td colspan="6">
+          <i data-lucide="inbox" aria-hidden="true"></i>
+          <span>暂无采集任务</span>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

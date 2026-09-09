@@ -1,0 +1,13 @@
+{% set pager = pagination|default({}) %}
+{% if pager.total_pages|default(1) > 1 %}
+<nav class="pagination" aria-label="分页">
+  {% if pager.prev_url|default('') %}<a class="page-button" href="{{ pager.prev_url }}" aria-label="上一页"><i data-lucide="chevron-left" aria-hidden="true"></i><span>上一页</span></a>{% else %}<span class="page-button is-disabled"><i data-lucide="chevron-left" aria-hidden="true"></i><span>上一页</span></span>{% endif %}
+  <div class="page-numbers">
+  {% for page_item in pager["items"]|default([]) %}
+    {% if page_item.ellipsis|default(false) %}<span class="page-ellipsis" aria-hidden="true">…</span>{% elif page_item.current|default(false) %}<span class="page-number is-current" aria-current="page">{{ page_item.label|default(page_item.page) }}</span>{% else %}<a class="page-number" href="{{ page_item.url }}">{{ page_item.label|default(page_item.page) }}</a>{% endif %}
+  {% endfor %}
+  </div>
+  <span class="page-position">第 {{ pager.page|default(1) }} / {{ pager.total_pages }} 页</span>
+  {% if pager.next_url|default('') %}<a class="page-button" href="{{ pager.next_url }}"><span>下一页</span><i data-lucide="chevron-right" aria-hidden="true"></i></a>{% else %}<span class="page-button is-disabled"><span>下一页</span><i data-lucide="chevron-right" aria-hidden="true"></i></span>{% endif %}
+</nav>
+{% endif %}

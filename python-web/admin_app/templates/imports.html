@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% set active_page = "imports" %}
+{% set import_stats = stats|default({}) %}
+{% set pager = pagination|default({}) %}
+{% block title %}数据导入{% endblock %}
+{% block page_title %}数据导入{% endblock %}
+{% block page_summary %}<p class="page-description">作品、视频目标、评论和聚合画像的本地长期记录</p>{% endblock %}
+{% block page_actions %}
+<form method="post" action="/imports/sync" data-pending-label="同步中…">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+  <button class="button button-secondary" type="submit"><i data-lucide="refresh-cw" aria-hidden="true"></i><span>同步数据库</span></button>
+</form>
+<form method="post" action="/analysis/run" data-pending-label="分析中…">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+  <button class="button button-primary" type="submit"><i data-lucide="chart-no-axes-combined" aria-hidden="true"></i><span>更新分析</span></button>
+</form>
+{% endblock %}
+
+{% block content %}
+<section class="metric-grid metric-grid-small" aria-label="导入指标">
+  <article class="metric-card"><div class="metric-label">总评论</div><div class="metric-value">{{ "{:,}".format(import_stats.comment_count|default(0)) }}</div><div class="metric-detail">MySQL 当前态</div></article>
+  <article class="metric-card"><div class="metric-label">历史快照</div><div class="metric-value">{{ "{:,}".format(import_stats.snapshot_count|default(0)) }}</div><div class="metric-detail">{{ import_stats.snapshot_growth|default(0) }} 条最近新增</div></article>
+  <article class="metric-card"><div class="metric-label">导入次数</div><div class="metric-value">{{ "{:,}".format(import_stats.import_count|default(0)) }}</div><div class="metric-detail">成功 {{ import_stats.success_count|default(0) }}</div></article>
+  <article class="metric-card"><div class="metric-label">最近同步</div><div class="metric-date">{{ import_stats.last_import_display|default('—') }}</div><div class="metric-detail">{{ import_stats.last_source_name|default('暂无来源') }}</div></article>
+</section>
+
+<div class="import-layout">
+  <section class="upload-panel">
+    <div class="section-heading"><div><h2>评论数据</h2><p>JSONL 采集批次</p></div></div>
+    <form class="upload-form" method="post" action="/imports/upload" enctype="multipart/form-data" data-upload-form>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+      <label class="file-drop" data-file-drop>
+        <input type="file" name="file" accept=".jsonl,.ndjson,application/x-ndjson,application/json" required data-file-input>
+        <i data-lucide="file-up" aria-hidden="true"></i>
+        <strong data-file-name>选择 JSONL 文件</strong>
+        <span>单个采集批次</span>
+      </label>
+      <div class="upload-options">
+        <label class="checkbox-label"><input type="checkbox" name="sync_after_import" value="1" checked><span>导入后同步 MySQL</span></label>
+        <label class="checkbox-label"><input type="checkbox" name="analyze_after_import" value="1"><span>同步后更新分析</span></label>
+      </div>
+      <button class="button button-primary button-full" type="submit"><i data-lucide="upload" aria-hidden="true"></i><span>校验并导入</span></button>
+    </form>
+  </section>
+
+  <section class="upload-panel">
+    <div class="section-heading"><div><h2>作品数据</h2><p>创作者中心官方导出</p></div></div>
+    <form class="upload-form" method="post" action="/imports/works" enctype="multipart/form-data" data-upload-form>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+      <label class="file-drop" data-file-drop>
+        <input type="file" name="file" accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" required data-file-input>
+        <i data-lucide="sheet" aria-hidden="true"></i>
+        <strong data-file-name>选择 XLSX 或 CSV 文件</strong>
+        <span>保留官方表头</span>
+      </label>
+      <div class="upload-options">
+        <label class="checkbox-label"><input type="checkbox" name="sync_after_import" value="1" checked><span>导入后同步 MySQL</span></label>
+        <label class="checkbox-label"><input type="checkbox" name="analyze_after_import" value="1" checked><span>同步后更新分析</span></label>
+      </div>
+      <button class="button button-primary button-full" type="submit"><i data-lucide="upload" aria-hidden="true"></i><span>校验并导入</span></button>
+    </form>
+  </section>
+
+  <section class="upload-panel">
+    <div class="section-heading"><div><h2>视频目标</h2><p>当前工作区的完整采集清单</p></div><a class="text-link" href="/imports/targets/template" download><span>下载模板</span><i data-lucide="download" aria-hidden="true"></i></a></div>
+    <form class="upload-form" method="post" action="/imports/targets" enctype="multipart/form-data" data-upload-form>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+      <label class="file-drop" data-file-drop>
+        <input type="file" name="file" accept=".json,application/json" required data-file-input>
+        <i data-lucide="list-video" aria-hidden="true"></i>
+        <strong data-file-name>选择 JSON 清单</strong>
+        <span>完整 manifest 或简化 videos 数组</span>
+      </label>
+      <div class="upload-options">
+        <label class="checkbox-label"><input type="checkbox" name="confirm_replace" value="1" required><span>替换当前目标，保留已有评论</span></label>
+        <label class="checkbox-label"><input type="checkbox" name="sync_after_import" value="1" checked><span>导入后同步 MySQL</span></label>
+      </div>
+      <button class="button button-primary button-full" type="submit"><i data-lucide="upload" aria-hidden="true"></i><span>校验并载入目标</span></button>
+    </form>
+  </section>
+
+  <section class="source-panel source-panel-full">
+    <div class="section-heading"><div><h2>本地数据源</h2><p>当前文件状态</p></div></div>
+    <dl class="source-list">
+    {% for source in sources|default([]) %}
+      <div>
+        <dt><span class="source-icon"><i data-lucide="{{ source.icon|default('file-json') }}" aria-hidden="true"></i></span><span><strong>{{ source.name }}</strong><code>{{ source.path }}</code></span></dt>
+        <dd><span>{{ source.record_count_display|default(source.record_count|default('—')) }}</span><time datetime="{{ source.updated_at|default('') }}">{{ source.updated_at_display|default('—') }}</time><span class="status-badge status-{{ source.status|default('success') }}"><span class="status-dot"></span>{{ source.status_label|default('正常') }}</span></dd>
+      </div>
+    {% else %}
+      <div class="source-empty"><dt>暂无数据源信息</dt></div>
+    {% endfor %}
+    </dl>
+  </section>
+</div>
+
+<section class="section-block">
+  <div class="section-heading"><div><h2>聚合画像数据</h2><p>账号快照或受众分布 JSONL</p></div></div>
+  <form class="filter-bar" method="post" action="/imports/account" enctype="multipart/form-data" data-upload-form>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+    <label class="field"><span class="field-label">数据类型</span><select name="kind" required><option value="profile">账号画像</option><option value="audience">受众画像</option></select></label>
+    <label class="field"><span class="field-label">JSONL 文件</span><input type="file" name="file" accept=".jsonl,.ndjson,application/x-ndjson,application/json" required></label>
+    <label class="checkbox-label"><input type="checkbox" name="sync_after_import" value="1" checked><span>同步 MySQL</span></label>
+    <label class="checkbox-label"><input type="checkbox" name="analyze_after_import" value="1" checked><span>更新分析</span></label>
+    <div class="filter-actions"><button class="button button-primary" type="submit"><i data-lucide="upload" aria-hidden="true"></i><span>校验并导入</span></button></div>
+  </form>
+</section>
+
+{% if validation|default(none) %}
+<section class="validation-strip {{ 'has-errors' if validation.error_count|default(0) else '' }}">
+  <div class="validation-icon"><i data-lucide="{{ 'triangle-alert' if validation.error_count|default(0) else 'shield-check' }}" aria-hidden="true"></i></div>
+  <div><strong>{{ '校验发现问题' if validation.error_count|default(0) else '最近校验通过' }}</strong><p>{{ validation.checked_count|default(0) }} 条记录 · {{ validation.duplicate_count|default(0) }} 条重复 · {{ validation.error_count|default(0) }} 个错误</p></div>
+  <time datetime="{{ validation.checked_at|default('') }}">{{ validation.checked_at_display|default('—') }}</time>
+</section>
+{% endif %}
+
+<section class="section-block">
+  <div class="section-heading"><div><h2>导入记录</h2><p>{{ pager.total_items|default(imports|default([])|length) }} 次执行</p></div></div>
+  <div class="table-scroll">
+    <table class="data-table import-table">
+      <thead><tr><th scope="col">完成时间</th><th scope="col">来源</th><th scope="col">原始 / 存储</th><th scope="col">重复</th><th scope="col">新增快照</th><th scope="col">耗时</th><th scope="col">结果</th></tr></thead>
+      <tbody>
+      {% for run in imports|default([]) %}
+        <tr>
+          <td data-label="完成时间"><time datetime="{{ run.completed_at|default('') }}">{{ run.completed_at_display|default('—') }}</time><code class="subtle-id">#{{ run.id|default(run.import_run_id|default('—')) }}</code></td>
+          <td data-label="来源"><span class="file-name" title="{{ run.source_path|default('') }}">{{ run.source_name|default(run.source_path|default('—')) }}</span><code class="hash-value" title="{{ run.source_sha256|default('') }}">{{ run.short_hash|default(run.source_sha256|default('')|truncate(12, True, '')) }}</code></td>
+          <td data-label="原始 / 存储">{{ "{:,}".format(run.raw_comment_count|default(0)) }} / {{ "{:,}".format(run.stored_comment_count|default(0)) }}</td>
+          <td data-label="重复">{{ run.duplicate_source_count|default(0) }}</td>
+          <td data-label="新增快照">{{ "{:,}".format(run.inserted_snapshot_count|default(0)) }}</td>
+          <td data-label="耗时">{{ run.duration_display|default('—') }}</td>
+          <td data-label="结果"><span class="status-badge status-{{ run.status|default('success') }}"><span class="status-dot"></span>{{ '成功' if run.status|default('success') == 'success' else '失败' }}</span></td>
+        </tr>
+      {% else %}
+        <tr class="empty-row"><td colspan="7"><i data-lucide="database" aria-hidden="true"></i><span>暂无导入记录</span></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% include "partials/pagination.html" ignore missing %}
+</section>
+{% endblock %}

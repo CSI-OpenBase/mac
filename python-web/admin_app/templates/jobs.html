@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% set active_page = "jobs" %}
+{% set current_filters = filters|default({}) %}
+{% set job_stats = stats|default({}) %}
+{% set pager = pagination|default({}) %}
+{% block title %}采集任务{% endblock %}
+{% block page_title %}采集任务{% endblock %}
+{% block page_summary %}<p class="page-description">{{ job_stats.running|default(0) }} 个运行中 · {{ job_stats.queued|default(0) }} 个等待中</p>{% endblock %}
+
+{% block content %}
+<section class="task-composer">
+  <div class="section-heading"><div><h2>新建任务</h2><p>选择目标和执行时间</p></div></div>
+  <form class="job-form" method="post" action="/jobs">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+    <label class="field">
+      <span class="field-label">任务类型</span>
+      <select name="job_type" required><option value="collect_video">采集评论</option></select>
+    </label>
+    <label class="field job-video-field">
+      <span class="field-label">目标视频</span>
+      <select name="video_id" required><option value="">选择视频</option>{% for video in video_options|default([]) %}<option value="{{ video.video_id }}">{{ video.status_label|default('待采') }} · {{ video.short_title|default(video.title|truncate(54, True, '…')) }}</option>{% endfor %}</select>
+    </label>
+    <label class="field">
+      <span class="field-label">计划执行</span>
+      <input type="datetime-local" name="scheduled_for" value="{{ default_scheduled_for|default('') }}">
+    </label>
+    <div class="form-submit"><button class="button button-primary" type="submit"><i data-lucide="plus" aria-hidden="true"></i><span>创建任务</span></button></div>
+  </form>
+</section>
+
+<form class="filter-bar compact-filter" method="get" action="/jobs">
+  <label class="field"><span class="field-label">状态</span><select name="status"><option value="">全部状态</option><option value="queued" {{ 'selected' if current_filters.status|default('') == 'queued' else '' }}>等待中</option><option value="running" {{ 'selected' if current_filters.status|default('') == 'running' else '' }}>采集中</option><option value="succeeded" {{ 'selected' if current_filters.status|default('') == 'succeeded' else '' }}>已完成</option><option value="failed" {{ 'selected' if current_filters.status|default('') == 'failed' else '' }}>失败</option><option value="blocked" {{ 'selected' if current_filters.status|default('') == 'blocked' else '' }}>受阻</option><option value="cancelled" {{ 'selected' if current_filters.status|default('') == 'cancelled' else '' }}>已取消</option></select></label>
+  <div class="filter-actions"><button class="button button-secondary" type="submit"><i data-lucide="list-filter" aria-hidden="true"></i><span>筛选</span></button>{% if current_filters.status|default('') %}<a class="button button-quiet" href="/jobs">清除</a>{% endif %}</div>
+</form>
+
+<section class="section-block section-flush">
+  <div class="table-toolbar"><span>{{ pager.total_items|default(jobs|default([])|length) }} 个任务</span><span class="polling-state"><i data-lucide="radio" aria-hidden="true"></i>实时状态</span></div>
+  {% set jobs_status = current_filters.status|default('') %}
+  {% set jobs_sort = current_filters.sort|default('newest') %}
+  {% set jobs_page = pager.page|default(1) %}
+  {% set jobs_limit = 25 %}
+  <div id="jobs-table-region" hx-get="/partials/jobs?status={{ jobs_status|urlencode }}&amp;sort={{ jobs_sort|urlencode }}&amp;page={{ jobs_page }}&amp;limit={{ jobs_limit }}" hx-trigger="every 8s" hx-swap="innerHTML">
+    {% include "partials/jobs_table.html" %}
+  </div>
+  {% include "partials/pagination.html" ignore missing %}
+</section>
+{% endblock %}

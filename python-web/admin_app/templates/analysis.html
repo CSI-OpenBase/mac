@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% set active_page = "analysis" %}
+{% set result = analysis|default({}) %}
+{% set works = result.works|default({}) %}
+{% set comments = result.comments|default({}) %}
+{% set audience = result.audience|default({}) %}
+{% block title %}账号分析{% endblock %}
+{% block page_title %}账号分析{% endblock %}
+{% block page_summary %}<p class="page-description">{{ workspace.display_name|default('创作者工作区') }} · {{ result.generated_at_display|default('尚未生成') }}</p>{% endblock %}
+{% block page_actions %}
+<a class="button button-secondary" href="https://aicsi.cn/" target="_blank" rel="noopener noreferrer"><i data-lucide="external-link" aria-hidden="true"></i><span>前往 CSI 深度分析</span></a>
+<form method="post" action="/analysis/run" data-pending-label="分析中…">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+  <button class="button button-primary" type="submit"><i data-lucide="refresh-cw" aria-hidden="true"></i><span>生成分析</span></button>
+</form>
+{% endblock %}
+
+{% block content %}
+<section class="metric-grid" aria-label="账号分析指标">
+  <article class="metric-card metric-accent"><div class="metric-label"><i data-lucide="clapperboard" aria-hidden="true"></i>有效作品</div><div class="metric-value">{{ "{:,}".format(works.analyzed_work_count|default(0)) }}</div><div class="metric-detail">{{ "{:,}".format(works.snapshot_count|default(0)) }} 条历史快照</div></article>
+  <article class="metric-card"><div class="metric-label"><i data-lucide="play" aria-hidden="true"></i>总播放</div><div class="metric-value">{{ "{:,}".format(works.total_views|default(0)) }}</div><div class="metric-detail">中位数 {{ "{:,}".format(works.median_views|default(0)) }}</div></article>
+  <article class="metric-card"><div class="metric-label"><i data-lucide="activity" aria-hidden="true"></i>互动率</div><div class="metric-value">{{ "{:.2%}".format(works.interaction_rate) if works.interaction_rate is defined and works.interaction_rate is not none else '—' }}</div><div class="metric-detail">赞、评、藏、转 / 播放</div></article>
+  <article class="metric-card"><div class="metric-label"><i data-lucide="circle-help" aria-hidden="true"></i>评论疑问</div><div class="metric-value">{{ "{:,}".format(comments.question_count|default(0)) }}</div><div class="metric-detail">{{ "{:.1%}".format(comments.question_rate) if comments.question_rate is defined and comments.question_rate is not none else '暂无评论样本' }}</div></article>
+</section>
+
+<section class="section-block">
+  <div class="section-heading"><div><h2>数据覆盖</h2><p>当前工作区可用数据</p></div><a class="text-link" href="/imports">管理数据<i data-lucide="arrow-right" aria-hidden="true"></i></a></div>
+  <div class="status-summary" aria-label="数据覆盖状态">
+    {% for key, label in [('profile', '账号画像'), ('works', '作品表现'), ('audience', '受众画像'), ('comments', '评论语料')] %}
+    <span class="summary-item {{ 'is-active' if result.availability[key]|default(false) else '' }}"><strong>{{ '已接入' if result.availability[key]|default(false) else '待接入' }}</strong><span>{{ label }}</span></span>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="section-block">
+  <div class="section-heading"><div><h2>基础信号</h2><p>{{ result.signals|default([])|length }} 条</p></div></div>
+  <div class="source-list">
+    {% for signal in result.signals|default([]) %}
+    <div><dt><span class="source-icon"><i data-lucide="{{ 'circle-alert' if signal.level == 'attention' else ('lightbulb' if signal.level == 'opportunity' else 'database') }}" aria-hidden="true"></i></span><span><strong>{{ signal.title }}</strong><span class="cell-secondary">{{ signal.detail }}</span></span></dt><dd><span class="status-badge status-{{ 'blocked' if signal.level == 'attention' else ('partial' if signal.level == 'data' else 'success') }}"><span class="status-dot"></span>{{ '关注' if signal.level == 'attention' else ('补充数据' if signal.level == 'data' else '机会') }}</span></dd></div>
+    {% else %}
+    <div class="source-empty"><dt>导入作品或评论数据后生成信号</dt></div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="section-block section-flush">
+  <div class="section-heading"><div><h2>高播放作品</h2><p>按当前最新快照排序</p></div></div>
+  <div class="table-scroll"><table class="data-table"><thead><tr><th scope="col">作品</th><th scope="col">播放</th><th scope="col">互动率</th></tr></thead><tbody>
+    {% for work in works.top_works|default([]) %}<tr><td data-label="作品"><span class="title-link clamp-2">{{ work.title }}</span><code class="subtle-id">{{ work.work_id }}</code></td><td data-label="播放">{{ "{:,}".format(work.view_count|default(0)) }}</td><td data-label="互动率">{{ "{:.2%}".format(work.interaction_rate) if work.interaction_rate is not none else '—' }}</td></tr>
+    {% else %}<tr class="empty-row"><td colspan="3"><i data-lucide="sheet" aria-hidden="true"></i><span>尚未导入作品数据</span></td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endblock %}
