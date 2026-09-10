@@ -94,18 +94,47 @@ validate_attribution_tree() {
 HOST_ARCH="$(uname -m)"
 case "$HOST_ARCH" in arm64|x86_64) ;; *) fail "Unsupported host architecture: $HOST_ARCH" ;; esac
 LIPO_TOOL="$(xcrun --find lipo)"
-validate_macho_architecture() {
-    local executable="$1" label="$2" description architectures
-    [[ -f "$executable" && -x "$executable" ]] \
-        || fail "$label is not executable: $executable"
-    description="$(file -b "$executable")"
-    case "$description" in *Mach-O*) ;; *) fail "$label is not Mach-O: $executable" ;; esac
-    architectures="$("$LIPO_TOOL" -archs "$executable")" \
+is_macho() {
+    case "$(file -b "$1")" in *Mach-O*) return 0 ;; *) return 1 ;; esac
+}
+
+validate_macho_file_architecture() {
+    local macho="$1" label="$2" architectures
+    [[ -f "$macho" ]] || fail "$label is not a file: $macho"
+    is_macho "$macho" || fail "$label is not Mach-O: $macho"
+    architectures="$("$LIPO_TOOL" -archs "$macho")" \
         || fail "Could not inspect $label architecture."
     case " $architectures " in
         *" $HOST_ARCH "*) ;;
         *) fail "$label lacks $HOST_ARCH architecture (found: $architectures)" ;;
     esac
+}
+
+validate_macho_architecture() {
+    local executable="$1" label="$2"
+    [[ -x "$executable" ]] || fail "$label is not executable: $executable"
+    validate_macho_file_architecture "$executable" "$label"
+}
+
+validate_playwright_runtime() {
+    local root="$1" label="$2" link resolved code_file macho_count
+    [[ -d "$root" ]] || fail "$label is not a directory: $root"
+    root="$(realpath "$root")"
+    while IFS= read -r -d '' link; do
+        resolved="$(realpath "$link")" || fail "$label has a dangling symlink: $link"
+        case "$resolved" in
+            "$root"/*) ;;
+            *) fail "$label symlink escapes its runtime tree: $link -> $resolved" ;;
+        esac
+    done < <(find "$root" -type l -print0)
+
+    macho_count=0
+    while IFS= read -r -d '' code_file; do
+        is_macho "$code_file" || continue
+        validate_macho_file_architecture "$code_file" "$label binary"
+        macho_count=$((macho_count + 1))
+    done < <(find "$root" -type f -print0)
+    [[ "$macho_count" -gt 0 ]] || fail "$label contains no Mach-O binaries: $root"
 }
 
 for path in "$BUILD_ROOT" "$DIST_DIR" "$VENV" "$BROWSER_CACHE" \
@@ -303,6 +332,7 @@ if [[ "$PREBUILT_BACKEND" -eq 0 ]]; then
 
     PYINSTALLER_ARGS=(
         --noconfirm --name CSI.OpenBase.Backend --onedir --console
+        --contents-directory _internal
         --distpath "$BACKEND_DIST"
         --workpath "$BACKEND_BUILD/work"
         --specpath "$BACKEND_BUILD/spec"
@@ -315,11 +345,11 @@ if [[ "$PREBUILT_BACKEND" -eq 0 ]]; then
         --exclude-module tkinter
         --exclude-module trio
     )
+    BROWSER_DIRS=()
     BROWSER_COUNT=0
     for browser_dir in "$BROWSER_CACHE"/*; do
         if [[ -d "$browser_dir" ]]; then
-            browser_name="$(basename "$browser_dir")"
-            PYINSTALLER_ARGS+=(--add-data "$browser_dir:ms-playwright/$browser_name")
+            BROWSER_DIRS+=("$browser_dir")
             BROWSER_COUNT=$((BROWSER_COUNT + 1))
         fi
     done
@@ -332,6 +362,27 @@ if [[ "$PREBUILT_BACKEND" -eq 0 ]]; then
     BACKEND_SOURCE="$BACKEND_DIST/CSI.OpenBase.Backend"
     BACKEND_EXECUTABLE_SOURCE="$BACKEND_SOURCE/CSI.OpenBase.Backend"
     validate_macho_architecture "$BACKEND_EXECUTABLE_SOURCE" "Generated backend"
+
+    # Preserve Chromium's nested bundle and framework links; PyInstaller's
+    # binary reclassification cannot safely assemble and sign this tree.
+    FROZEN_BROWSER_ROOT="$BACKEND_SOURCE/_internal/ms-playwright"
+    mkdir -p "$FROZEN_BROWSER_ROOT"
+    for browser_dir in "${BROWSER_DIRS[@]}"; do
+        browser_name="$(basename "$browser_dir")"
+        frozen_browser_dir="$FROZEN_BROWSER_ROOT/$browser_name"
+        ditto --norsrc --noextattr --noqtn --noacl \
+            "$browser_dir" "$frozen_browser_dir"
+        validate_playwright_runtime "$frozen_browser_dir" \
+            "Bundled Playwright runtime $browser_name"
+        case "$browser_name" in
+            chromium-*)
+                [[ -n "$(find "$frozen_browser_dir" -type f -name ABOUT -print -quit)" ]] \
+                    || fail "Bundled Chromium attribution is missing: $frozen_browser_dir" ;;
+            ffmpeg-*)
+                [[ -f "$frozen_browser_dir/COPYING.LGPLv2.1" ]] \
+                    || fail "Bundled FFmpeg license is missing: $frozen_browser_dir" ;;
+        esac
+    done
 else
     cp "$PROJECT_NOTICE_SOURCE/LICENSE" "$LICENSE_STAGE/backend/LICENSE"
     cp "$PROJECT_NOTICE_SOURCE/NOTICE" "$LICENSE_STAGE/backend/NOTICE"
@@ -380,10 +431,6 @@ cp -R "$LICENSE_STAGE/." "$RESOURCES/backend-licenses/"
 plutil -lint "$CONTENTS/Info.plist" \
     "$PROJECT_DIR/Packaging/backend.entitlements" \
     "$PROJECT_DIR/Packaging/chromium.entitlements"
-
-is_macho() {
-    case "$(file -b "$1")" in *Mach-O*) return 0 ;; *) return 1 ;; esac
-}
 
 if [[ -n "$SIGNING_ID" ]]; then
     command -v codesign >/dev/null 2>&1 || fail "codesign was not found."

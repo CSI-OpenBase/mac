@@ -47,6 +47,24 @@ class EmbeddedBackendContractTests(unittest.TestCase):
                 self.assertGreater(prefix.rfind("#if DEBUG"), prefix.rfind("#endif"))
                 self.assertNotEqual(source.find("#endif", override), -1)
 
+    def test_browser_bundle_is_copied_after_pyinstaller_freezes_backend(self) -> None:
+        source = (MAC_ROOT / "build_macos.sh").read_text(encoding="utf-8")
+
+        freeze = source.index('"$VENV_PYTHON" -m PyInstaller')
+        browser_destination = source.index(
+            'FROZEN_BROWSER_ROOT="$BACKEND_SOURCE/_internal/ms-playwright"'
+        )
+        browser_copy = source.index("ditto --norsrc --noextattr --noqtn --noacl")
+        browser_validation = source.index(
+            'validate_playwright_runtime "$frozen_browser_dir"'
+        )
+
+        self.assertIn("--contents-directory _internal", source)
+        self.assertNotIn('PYINSTALLER_ARGS+=(--add-data "$browser_dir', source)
+        self.assertLess(freeze, browser_destination)
+        self.assertLess(browser_destination, browser_copy)
+        self.assertLess(browser_copy, browser_validation)
+
     def test_embedded_project_preserves_the_backend_entry_contract(self) -> None:
         configuration = tomllib.loads(
             (PYTHON_WEB_ROOT / "pyproject.toml").read_text(encoding="utf-8")
