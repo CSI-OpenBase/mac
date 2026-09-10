@@ -1,6 +1,6 @@
 # macOS Project Guidance
 
-Canonical remote: `git@github.com:cdsi-project/Beacon.git`
+Canonical remote: `git@github.com:CSI-OpenBase/mac.git`
 
 This repository owns the SwiftUI/WKWebView host, the Python web backend in
 `python-web/`, the backend supervisor, macOS packaging, signing inputs, and

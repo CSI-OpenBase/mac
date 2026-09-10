@@ -1,6 +1,6 @@
 # Embedded Python Web Guidance
 
-Canonical repository: `git@github.com:cdsi-project/Beacon.git`
+Canonical repository: `git@github.com:CSI-OpenBase/mac.git`
 
 This repository is the source of truth for creator authorization, automatic data
 table export, local video archives, user-triggered anonymized comment export,

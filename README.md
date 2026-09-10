@@ -4,9 +4,9 @@
 仓库内的 `python-web/` 提供创作者授权、表格导出、视频归档、评论采集、持久化
 和本地 Web 界面。项目不包含 CSI Core 的评分、权重、行业基准或商业报告逻辑。
 
-正式仓库：[cdsi-project/Beacon](https://github.com/cdsi-project/Beacon)
+正式仓库：[CSI-OpenBase/mac](https://github.com/CSI-OpenBase/mac)
 
-SSH 克隆地址：`git@github.com:cdsi-project/Beacon.git`
+SSH 克隆地址：`git@github.com:CSI-OpenBase/mac.git`
 
 Windows 主机维护在 [CSI-OpenBase/winform](https://github.com/CSI-OpenBase/winform)。
 
