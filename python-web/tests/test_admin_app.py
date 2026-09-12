@@ -32,6 +32,7 @@ def test_pagination_clamps_page_and_preserves_nonempty_filters() -> None:
             "tag": ["维修", "反馈"],
             "page": 99,
         },
+        fragment="comment-table",
     )
 
     assert pager["page"] == 8
@@ -42,6 +43,7 @@ def test_pagination_clamps_page_and_preserves_nonempty_filters() -> None:
 
     previous = urlsplit(pager["prev_url"])
     assert previous.path == "/comments"
+    assert previous.fragment == "comment-table"
     assert parse_qs(previous.query) == {
         "q": ["双离合 & 保养"],
         "tag": ["维修", "反馈"],

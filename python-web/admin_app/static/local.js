@@ -3,11 +3,22 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const selectAll = document.querySelector("[data-select-all]");
   if (selectAll) {
+    const selections = Array.from(
+      document.querySelectorAll('#comment-batch input[name="video_id"]'),
+    );
+    const updateSelectAll = () => {
+      const selected = selections.filter((input) => input.checked).length;
+      selectAll.checked = selections.length > 0 && selected === selections.length;
+      selectAll.indeterminate = selected > 0 && selected < selections.length;
+    };
     selectAll.addEventListener("change", () => {
-      document.querySelectorAll('input[name="video_id"]').forEach((input) => {
+      selections.forEach((input) => {
         input.checked = selectAll.checked;
       });
+      updateSelectAll();
     });
+    selections.forEach((input) => input.addEventListener("change", updateSelectAll));
+    updateSelectAll();
   }
 
   const clearDialog = document.querySelector("[data-clear-dialog]");

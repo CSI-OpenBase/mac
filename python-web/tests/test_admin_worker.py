@@ -119,6 +119,63 @@ def _accumulator(
     return accumulator
 
 
+def _accumulator_with_counts(
+    *,
+    reported_total: int,
+    root_count: int,
+    reply_count: int = 0,
+    has_more: bool = False,
+) -> ResponseAccumulator:
+    accumulator = ResponseAccumulator(
+        video_id=VIDEO_ID,
+        video_url=f"https://www.douyin.com/video/{VIDEO_ID}",
+        video_title="评论总数容错测试",
+        collected_at="2026-09-12T07:38:50Z",
+        batch_name="2026-09-12-total-tolerance",
+    )
+    accumulator.consume(
+        f"https://www.douyin.com/aweme/v1/web/aweme/detail/?aweme_id={VIDEO_ID}",
+        {
+            "status_code": 0,
+            "aweme_detail": {
+                "aweme_id": VIDEO_ID,
+                "author": {"uid": "creator-uid"},
+            },
+        },
+    )
+    roots: list[dict[str, Any]] = []
+    for index in range(root_count):
+        root_id = str(4_000_000_000_000_000_000 + index)
+        root: dict[str, Any] = {
+            "cid": root_id,
+            "aweme_id": VIDEO_ID,
+            "text": f"root {index}",
+            "reply_comment_total": reply_count if index == 0 else 0,
+            "user": {"uid": f"viewer-{index}"},
+        }
+        if index == 0 and reply_count:
+            root["reply_comment"] = [
+                {
+                    "cid": str(5_000_000_000_000_000_000 + reply_index),
+                    "aweme_id": VIDEO_ID,
+                    "text": f"reply {reply_index}",
+                    "user": {"uid": f"reply-viewer-{reply_index}"},
+                }
+                for reply_index in range(reply_count)
+            ]
+        roots.append(root)
+    accumulator.consume(
+        f"https://www.douyin.com/aweme/v1/web/comment/list/?aweme_id={VIDEO_ID}",
+        {
+            "status_code": 0,
+            "has_more": has_more,
+            "total": reported_total,
+            "comments": roots,
+        },
+    )
+    return accumulator
+
+
 def test_response_accumulator_materializes_complete_root_and_reply() -> None:
     complete, reasons, records = _accumulator().completeness()
 
@@ -134,6 +191,89 @@ def test_response_accumulator_materializes_complete_root_and_reply() -> None:
     assert reply["author_role"] == "creator"
     assert reply["parent_comment_id"] == ROOT_ID
     assert reply["root_comment_id"] == ROOT_ID
+
+
+@pytest.mark.parametrize(
+    ("reported", "captured", "matches"),
+    (
+        (0, 0, True),
+        (0, 1, False),
+        (19, 18, False),
+        (20, 19, True),
+        (20, 21, True),
+        (77, 74, True),
+        (77, 73, False),
+        (100, 95, True),
+        (100, 105, True),
+        (100, 94, False),
+        (100, 106, False),
+    ),
+)
+def test_reported_total_tolerance_uses_reported_count_as_denominator(
+    reported: int, captured: int, matches: bool
+) -> None:
+    assert collector_module._count_within_tolerance(reported, captured) is matches
+
+
+def test_reported_total_tolerance_preserves_both_douyin_count_scopes() -> None:
+    assert collector_module._reported_total_matches(
+        100, root_count=100, record_count=130
+    )
+    assert collector_module._reported_total_matches(
+        100, root_count=60, record_count=100
+    )
+
+
+def test_response_accumulator_accepts_five_percent_total_variance() -> None:
+    accumulator = _accumulator_with_counts(
+        reported_total=77,
+        root_count=27,
+        reply_count=49,
+    )
+
+    assessment = accumulator.assessment()
+    diagnostics = accumulator.diagnostics(
+        assessment.records, warnings=assessment.warnings
+    )
+
+    assert assessment.status == "complete"
+    assert assessment.warnings == ()
+    assert len(assessment.records) == 76
+    assert diagnostics["reported_total"] == 77
+    assert diagnostics["reported_total_tolerance_percent"] == 5
+    assert diagnostics["reported_total_within_tolerance"] is True
+
+
+def test_response_accumulator_keeps_material_total_gap_partial() -> None:
+    accumulator = _accumulator_with_counts(
+        reported_total=77,
+        root_count=27,
+        reply_count=45,
+    )
+
+    assessment = accumulator.assessment()
+    diagnostics = accumulator.diagnostics(
+        assessment.records, warnings=assessment.warnings
+    )
+
+    assert assessment.status == "partial"
+    assert any("Douyin reported total 77" in warning for warning in assessment.warnings)
+    assert diagnostics["reported_total_within_tolerance"] is False
+
+
+def test_total_tolerance_does_not_hide_open_root_pagination() -> None:
+    assessment = _accumulator_with_counts(
+        reported_total=77,
+        root_count=27,
+        reply_count=49,
+        has_more=True,
+    ).assessment()
+
+    assert assessment.status == "blocked"
+    assert any(
+        "Root-comment pagination did not reach has_more=false" in blocker
+        for blocker in assessment.blockers
+    )
 
 
 def test_creator_identity_tokens_do_not_collide_across_id_namespaces() -> None:

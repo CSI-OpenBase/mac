@@ -114,6 +114,8 @@ class LocalStore:
                     record_json TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
+                CREATE INDEX IF NOT EXISTS ix_archive_videos_last_seen
+                    ON archive_videos(last_seen_at DESC, video_id DESC);
                 CREATE TABLE IF NOT EXISTS archive_clear_operations (
                     operation_id TEXT PRIMARY KEY,
                     scope TEXT NOT NULL,
@@ -458,6 +460,36 @@ class LocalStore:
                 (bounded,),
             ).fetchall()
         return [self._video(row) for row in rows]
+
+    def list_video_page(
+        self, *, page: int = 1, page_size: int = 30
+    ) -> dict[str, Any]:
+        requested_page = max(int(page), 1)
+        bounded_page_size = min(max(int(page_size), 1), 100)
+        with self._lock, self._connect() as connection:
+            total = int(
+                connection.execute(
+                    "SELECT COUNT(*) AS count FROM archive_videos"
+                ).fetchone()["count"]
+            )
+            pages = max(1, (total + bounded_page_size - 1) // bounded_page_size)
+            current_page = min(requested_page, pages)
+            offset = (current_page - 1) * bounded_page_size
+            rows = connection.execute(
+                """
+                SELECT * FROM archive_videos
+                ORDER BY last_seen_at DESC, video_id DESC
+                LIMIT ? OFFSET ?
+                """,
+                (bounded_page_size, offset),
+            ).fetchall()
+        return {
+            "items": [self._video(row) for row in rows],
+            "total": total,
+            "page": current_page,
+            "page_size": bounded_page_size,
+            "pages": pages,
+        }
 
     def record_comment_export(
         self, video_id: str, *, count: int, exported_at: str | None = None

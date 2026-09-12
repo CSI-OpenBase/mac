@@ -2,9 +2,9 @@
 
 Only normalized, anonymous comment records are written. Raw HTTP responses are
 never persisted, and browser state stays in the repository's ignored runtime
-directory. A capture is reported as complete only when all counts match, or
-partial when every page was exhausted but Douyin no longer exposes every
-declared comment.
+directory. A capture is reported as complete when structural counts match and
+Douyin's aggregate total is within the allowed variance, or partial when every
+page was exhausted but a material count gap remains.
 """
 
 from __future__ import annotations
@@ -56,6 +56,7 @@ LOGIN_TEXTS = (
 )
 BLOCKER_SCOPE_SELECTOR = "dialog, [role='dialog'], [role='alert'], form"
 ZERO_IDS = {"", "0", "-1", "None", "null"}
+REPORTED_TOTAL_TOLERANCE_PERCENT = 5
 
 
 def utc_now() -> str:
@@ -111,6 +112,28 @@ def _is_count(value: Any) -> bool:
     if isinstance(value, str):
         return value.strip().replace(",", "").isdigit()
     return False
+
+
+def _count_within_tolerance(reported: int, captured: int) -> bool:
+    """Compare a captured count against Douyin's total without float rounding."""
+    if reported < 0 or captured < 0:
+        return False
+    if reported == 0:
+        return captured == 0
+    return (
+        abs(captured - reported) * 100
+        <= reported * REPORTED_TOTAL_TOLERANCE_PERCENT
+    )
+
+
+def _reported_total_matches(
+    reported: int, *, root_count: int, record_count: int
+) -> bool:
+    # Douyin has returned both root-only and root-plus-reply totals in practice.
+    return any(
+        _count_within_tolerance(reported, captured)
+        for captured in {root_count, record_count}
+    )
 
 
 def _timestamp(value: Any) -> str | None:
@@ -572,10 +595,11 @@ class ResponseAccumulator:
                 (warnings if terminal else blockers).append(message)
 
         root_count = sum(row["comment_type"] == "root" for row in records)
-        if self._reported_total is not None and self._reported_total not in {
-            root_count,
-            len(records),
-        }:
+        if self._reported_total is not None and not _reported_total_matches(
+            self._reported_total,
+            root_count=root_count,
+            record_count=len(records),
+        ):
             message = (
                 f"Douyin reported total {self._reported_total}, but the capture has "
                 f"{root_count} roots and {len(records)} total records"
@@ -618,6 +642,15 @@ class ResponseAccumulator:
     ) -> dict[str, Any]:
         roots = sum(row["comment_type"] == "root" for row in records)
         replies = len(records) - roots
+        total_within_tolerance = (
+            None
+            if self._reported_total is None
+            else _reported_total_matches(
+                self._reported_total,
+                root_count=roots,
+                record_count=len(records),
+            )
+        )
         return {
             "captured_records": len(records),
             "observed_records": len(self._comments),
@@ -628,6 +661,8 @@ class ResponseAccumulator:
             "reply_pages": self._reply_pages,
             "root_pagination_closed": self._root_terminal_seen,
             "reported_total": self._reported_total,
+            "reported_total_tolerance_percent": REPORTED_TOTAL_TOLERANCE_PERCENT,
+            "reported_total_within_tolerance": total_within_tolerance,
             "declared_reply_roots": sum(
                 count > 0 for count in self._root_expected_replies.values()
             ),

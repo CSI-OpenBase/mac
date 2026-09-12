@@ -31,9 +31,35 @@ from .local_config import LocalSettings, load_local_settings
 from .local_lock import WorkspaceLease
 from .local_store import ActiveCommentJobError, ActiveLocalJobsError, LocalStore
 from .security import add_flash, csrf_token, pop_flashes, validate_csrf
+from .viewmodels import pagination
 
 
 APP_DIR = Path(__file__).resolve().parent
+VIDEO_PAGE_SIZES = (30, 50, 100)
+DEFAULT_VIDEO_PAGE_SIZE = VIDEO_PAGE_SIZES[0]
+MAX_VIDEO_PAGE = 1_000_000
+
+
+def _video_page(value: Any) -> int:
+    try:
+        parsed = int(str(value or "1"))
+    except (TypeError, ValueError):
+        return 1
+    return min(max(parsed, 1), MAX_VIDEO_PAGE)
+
+
+def _video_page_size(value: Any) -> int:
+    try:
+        parsed = int(str(value or DEFAULT_VIDEO_PAGE_SIZE))
+    except (TypeError, ValueError):
+        return DEFAULT_VIDEO_PAGE_SIZE
+    return parsed if parsed in VIDEO_PAGE_SIZES else DEFAULT_VIDEO_PAGE_SIZE
+
+
+def _video_return_path(form: Any) -> str:
+    page = _video_page(form.get("page"))
+    page_size = _video_page_size(form.get("page_size"))
+    return f"/?page={page}&page_size={page_size}#video-archive"
 
 
 class DesktopTokenMiddleware(BaseHTTPMiddleware):
@@ -147,7 +173,13 @@ def create_local_app(
 
     def page_context(request: Request) -> dict[str, Any]:
         jobs = store.list_jobs(limit=30)
-        videos = store.list_videos(limit=10_000)
+        requested_page = _video_page(request.query_params.get("page"))
+        requested_page_size = _video_page_size(
+            request.query_params.get("page_size")
+        )
+        video_page = store.list_video_page(
+            page=requested_page, page_size=requested_page_size
+        )
         account = store.get_meta("creator_identity", {})
         last_discovery = store.get_meta("last_video_sync", {})
         return {
@@ -158,7 +190,17 @@ def create_local_app(
             "account": account,
             "authorized": bool(account and account.get("handle")),
             "jobs": jobs,
-            "videos": videos,
+            "videos": video_page["items"],
+            "video_total": video_page["total"],
+            "video_page_size": video_page["page_size"],
+            "video_pagination": pagination(
+                page=video_page["page"],
+                total_pages=video_page["pages"],
+                total_items=video_page["total"],
+                path="/",
+                query={"page_size": video_page["page_size"]},
+                fragment="video-archive",
+            ),
             "active_jobs": store.active_job_count(),
             "data_home": str(settings.data_home),
             "last_export": store.get_meta("last_export", {}),
@@ -182,7 +224,13 @@ def create_local_app(
     def home(request: Request) -> HTMLResponse:
         return templates.TemplateResponse(request, "local_home.html", page_context(request))
 
-    def submit(request: Request, kind: str, **payload: Any) -> RedirectResponse:
+    def submit(
+        request: Request,
+        kind: str,
+        *,
+        redirect_path: str = "/",
+        **payload: Any,
+    ) -> RedirectResponse:
         try:
             job = runner.submit(kind, **payload)
         except ActiveCommentJobError as exc:
@@ -191,7 +239,7 @@ def create_local_app(
             add_flash(request, str(exc), "error")
         else:
             add_flash(request, f"任务 #{job['id']} 已开始", "success")
-        return _redirect()
+        return _redirect(redirect_path)
 
     @app.post("/actions/authorize")
     async def authorize(request: Request) -> RedirectResponse:
@@ -268,7 +316,12 @@ def create_local_app(
     async def export_comments(request: Request, video_id: str) -> RedirectResponse:
         form = await request.form()
         validate_csrf(request, form)
-        return submit(request, "comments", video_id=video_id)
+        return submit(
+            request,
+            "comments",
+            redirect_path=_video_return_path(form),
+            video_id=video_id,
+        )
 
     @app.post("/comments/batch")
     async def export_comment_batch(request: Request) -> RedirectResponse:
@@ -278,7 +331,7 @@ def create_local_app(
         video_ids = [value for value in video_ids if value]
         if not video_ids:
             add_flash(request, "请选择至少一个视频", "error")
-            return _redirect()
+            return _redirect(_video_return_path(form))
         accepted = 0
         rejected = 0
         for video_id in video_ids:
@@ -289,7 +342,7 @@ def create_local_app(
                 rejected += 1
         level = "warning" if rejected else "success"
         add_flash(request, f"已启动 {accepted} 个评论导出任务，跳过 {rejected} 个", level)
-        return _redirect()
+        return _redirect(_video_return_path(form))
 
     @app.get("/api/state")
     def state() -> JSONResponse:

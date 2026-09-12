@@ -20,6 +20,18 @@ def video_record(video_id: str = "7680023068660346011") -> dict[str, object]:
     }
 
 
+def video_records(count: int) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    for index in range(count):
+        record = video_record(str(7_700_000_000_000_000_000 + index))
+        record["title"] = f"分页视频 {index:03d}"
+        record["last_seen_at"] = (
+            f"2026-09-07T{10 + index // 60:02d}:{index % 60:02d}:00Z"
+        )
+        records.append(record)
+    return records
+
+
 def test_store_persists_metadata_and_video_index(tmp_path: Path) -> None:
     store = LocalStore(tmp_path / "openbase.sqlite3")
     store.set_meta("creator_identity", {"handle": "creator"})
@@ -39,6 +51,47 @@ def test_store_persists_metadata_and_video_index(tmp_path: Path) -> None:
     assert video["title"] == "更新标题"
     assert video["first_seen_at"] == "2026-09-07T10:00:00Z"
     assert video["last_seen_at"] == "2026-09-08T10:00:00Z"
+
+
+def test_video_pages_report_total_and_keep_stable_order(tmp_path: Path) -> None:
+    store = LocalStore(tmp_path / "openbase.sqlite3")
+    records = video_records(65)
+    assert store.upsert_videos(records) == 65
+
+    first = store.list_video_page(page=1, page_size=30)
+    second = store.list_video_page(page=2, page_size=30)
+    last = store.list_video_page(page=99, page_size=30)
+
+    assert first["total"] == 65
+    assert first["pages"] == 3
+    assert first["page"] == 1
+    assert [item["video_id"] for item in first["items"]] == [
+        record["video_id"] for record in reversed(records[35:])
+    ]
+    assert [item["video_id"] for item in second["items"]] == [
+        record["video_id"] for record in reversed(records[5:35])
+    ]
+    assert last["page"] == 3
+    assert [item["video_id"] for item in last["items"]] == [
+        record["video_id"] for record in reversed(records[:5])
+    ]
+    assert store.list_videos(limit=100_000) == (
+        first["items"] + second["items"] + last["items"]
+    )
+
+
+def test_empty_video_page_stays_on_page_one(tmp_path: Path) -> None:
+    store = LocalStore(tmp_path / "openbase.sqlite3")
+
+    page = store.list_video_page(page=999, page_size=100)
+
+    assert page == {
+        "items": [],
+        "total": 0,
+        "page": 1,
+        "page_size": 100,
+        "pages": 1,
+    }
 
 
 def test_video_index_records_visible_comments_without_claiming_an_export(

@@ -7,7 +7,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from zoneinfo import ZoneInfo
 
 from markupsafe import Markup, escape
@@ -181,10 +181,17 @@ def decorate_import(item: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def pagination(
-    *, page: int, total_pages: int, total_items: int, path: str, query: Mapping[str, Any]
+    *,
+    page: int,
+    total_pages: int,
+    total_items: int,
+    path: str,
+    query: Mapping[str, Any],
+    fragment: str = "",
 ) -> dict[str, Any]:
     total_pages = max(1, int(total_pages or 0))
     page = min(max(1, page), total_pages)
+    anchor = f"#{quote(fragment, safe='')}" if fragment else ""
 
     def url_for(target: int) -> str:
         values = {
@@ -193,7 +200,7 @@ def pagination(
             if value not in (None, "") and key != "page"
         }
         values["page"] = target
-        return f"{path}?{urlencode(values, doseq=True)}"
+        return f"{path}?{urlencode(values, doseq=True)}{anchor}"
 
     candidates = sorted({1, total_pages, page - 2, page - 1, page, page + 1, page + 2})
     candidates = [value for value in candidates if 1 <= value <= total_pages]

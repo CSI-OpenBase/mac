@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,32 @@ def csrf(client: TestClient) -> str:
     return response.text.split(marker, 1)[1].split('"', 1)[0]
 
 
+def archive_videos(store: LocalStore, count: int) -> list[str]:
+    records: list[dict[str, object]] = []
+    video_ids: list[str] = []
+    for index in range(count):
+        video_id = str(7_700_000_000_000_000_000 + index)
+        video_ids.append(video_id)
+        records.append(
+            {
+                "video_id": video_id,
+                "title": f"分页视频 {index:03d}",
+                "video_url": f"https://www.douyin.com/video/{video_id}",
+                "manifest_path": f"works/videos/douyin/{video_id}/manifest.json",
+                "first_seen_at": "2026-09-07T10:00:00Z",
+                "last_seen_at": (
+                    f"2026-09-07T{10 + index // 60:02d}:{index % 60:02d}:00Z"
+                ),
+            }
+        )
+    store.upsert_videos(records)
+    return video_ids
+
+
+def rendered_video_ids(html: str) -> list[str]:
+    return re.findall(r'name="video_id" value="(\d+)"', html)
+
+
 def test_local_home_and_manual_authorization_job(tmp_path: Path) -> None:
     local_settings = settings(tmp_path)
     store = LocalStore(local_settings.database_path)
@@ -66,6 +93,44 @@ def test_local_home_and_manual_authorization_job(tmp_path: Path) -> None:
         )
         assert response.status_code == 303
     assert runner.calls == [("authorize", {})]
+
+
+def test_local_home_paginates_video_archive_with_selectable_page_size(
+    tmp_path: Path,
+) -> None:
+    local_settings = settings(tmp_path)
+    store = LocalStore(local_settings.database_path)
+    video_ids = archive_videos(store, 105)
+    runner = FakeRunner(store)
+
+    with TestClient(
+        create_local_app(local_settings, store=store, runner=runner)
+    ) as client:
+        first = client.get("/")
+        second = client.get("/?page=2&page_size=50")
+        last = client.get("/?page=99&page_size=50")
+        hundred = client.get("/?page=2&page_size=100")
+        invalid = client.get("/?page=invalid&page_size=25")
+
+    assert first.status_code == 200
+    assert rendered_video_ids(first.text) == list(reversed(video_ids[75:]))
+    assert "105 个视频" in first.text
+    assert '<option value="30" selected>30</option>' in first.text
+    assert 'aria-label="选择本页全部视频"' in first.text
+    assert 'aria-label="视频档案分页"' in first.text
+    assert '/?page_size=30&amp;page=2#video-archive' in first.text
+
+    assert rendered_video_ids(second.text) == list(reversed(video_ids[5:55]))
+    assert '<option value="50" selected>50</option>' in second.text
+    assert '<span class="page-number is-current" aria-current="page">2</span>' in second.text
+
+    assert rendered_video_ids(last.text) == list(reversed(video_ids[:5]))
+    assert '<span class="page-number is-current" aria-current="page">3</span>' in last.text
+    assert 'class="page-button is-disabled" aria-disabled="true"><span>下一页' in last.text
+
+    assert rendered_video_ids(hundred.text) == list(reversed(video_ids[:5]))
+    assert '<option value="100" selected>100</option>' in hundred.text
+    assert rendered_video_ids(invalid.text) == list(reversed(video_ids[75:]))
 
 
 def test_local_home_exposes_scoped_clear_dialog(tmp_path: Path) -> None:
@@ -440,10 +505,42 @@ def test_comment_route_only_creates_explicit_immediate_job(tmp_path: Path) -> No
         )
         response = client.post(
             "/videos/7680023068660346011/comments",
-            data={"csrf_token": csrf(client)},
+            data={"csrf_token": csrf(client), "page": "2", "page_size": "50"},
             follow_redirects=False,
         )
         assert response.status_code == 303
+        assert response.headers["location"] == (
+            "/?page=2&page_size=50#video-archive"
+        )
     assert runner.calls == [
         ("comments", {"video_id": "7680023068660346011"})
+    ]
+
+
+def test_comment_batch_returns_to_the_current_video_page(tmp_path: Path) -> None:
+    local_settings = settings(tmp_path)
+    store = LocalStore(local_settings.database_path)
+    video_ids = archive_videos(store, 2)
+    runner = FakeRunner(store)
+
+    with TestClient(
+        create_local_app(local_settings, store=store, runner=runner)
+    ) as client:
+        response = client.post(
+            "/comments/batch",
+            data={
+                "csrf_token": csrf(client),
+                "video_id": video_ids,
+                "page": "3",
+                "page_size": "100",
+            },
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == (
+        "/?page=3&page_size=100#video-archive"
+    )
+    assert runner.calls == [
+        ("comments", {"video_id": video_id}) for video_id in video_ids
     ]

@@ -33,7 +33,7 @@
         <p class="path" title="{{ data_home }}">{{ data_home }}</p>
       </div>
       <dl class="summary">
-        <div><dt>视频</dt><dd>{{ videos|length }}</dd></div>
+        <div><dt>视频</dt><dd>{{ video_total }}</dd></div>
         <div><dt>运行中</dt><dd>{{ active_jobs }}</dd></div>
         <div><dt>最近导出</dt><dd>{{ last_export.finished_at|default('—') }}</dd></div>
       </dl>
@@ -66,16 +66,29 @@
       </form>
     </section>
 
-    <section class="content-band">
+    <section class="content-band" id="video-archive">
       <div class="section-heading">
-        <div><h2>视频档案</h2><span>{{ videos|length }} 个视频</span></div>
-        {% if videos %}<button class="button button-secondary" type="submit" form="comment-batch"><i data-lucide="message-square-down" aria-hidden="true"></i><span>导出所选评论</span></button>{% endif %}
+        <div><h2>视频档案</h2><span>{{ video_total }} 个视频</span></div>
+        <div class="video-heading-actions">
+          <form class="page-size-form" method="get" action="/#video-archive">
+            <input type="hidden" name="page" value="1">
+            <label for="video-page-size">每页</label>
+            <select id="video-page-size" name="page_size">
+              {% for size in (30, 50, 100) %}<option value="{{ size }}" {{ 'selected' if video_page_size == size else '' }}>{{ size }}</option>{% endfor %}
+            </select>
+            <span>条</span>
+            <button class="icon-button" type="submit" title="应用每页数量"><i data-lucide="check" aria-hidden="true"></i><span class="sr-only">应用每页数量</span></button>
+          </form>
+          {% if videos %}<button class="button button-secondary" type="submit" form="comment-batch"><i data-lucide="message-square-down" aria-hidden="true"></i><span>导出所选评论</span></button>{% endif %}
+        </div>
       </div>
       <form method="post" action="/comments/batch" id="comment-batch">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="page" value="{{ video_pagination.page }}">
+        <input type="hidden" name="page_size" value="{{ video_page_size }}">
         <div class="table-wrap">
           <table>
-            <thead><tr><th class="select-cell"><input type="checkbox" data-select-all aria-label="选择全部视频"></th><th>视频</th><th>首次发现</th><th>最近同步</th><th>评论数</th><th class="action-cell">操作</th></tr></thead>
+            <thead><tr><th class="select-cell"><input type="checkbox" data-select-all aria-label="选择本页全部视频" {% if not videos %}disabled{% endif %}></th><th>视频</th><th>首次发现</th><th>最近同步</th><th>评论数</th><th class="action-cell">操作</th></tr></thead>
             <tbody>
               {% for video in videos %}
               <tr>
@@ -93,6 +106,9 @@
           </table>
         </div>
       </form>
+      {% set pagination = video_pagination %}
+      {% set pagination_label = '视频档案分页' %}
+      {% include "partials/pagination.html" ignore missing %}
     </section>
 
     <section class="content-band history-band">
