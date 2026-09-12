@@ -82,12 +82,12 @@ PyInstaller onedir 目录，也可以是单个 Mach-O 可执行文件。脚本�
   --backend-notices /absolute/path/to/backend-license-directory
 ```
 
-输出仅写入 `mac/dist/`：
+输出仅写入 `dist/`：
 
 - `dist/CSI OpenBase.app`
 - `dist/CSI-OpenBase-macOS.zip`
 
-中间 venv、浏览器和 PyInstaller 产物全部位于 `mac/.build/`。
+中间 venv、浏览器和 PyInstaller 产物全部位于 `.build/`。
 
 使用 Developer ID 证书签名：
 
