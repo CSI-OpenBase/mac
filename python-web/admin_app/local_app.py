@@ -8,7 +8,12 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -313,7 +318,10 @@ def create_local_app(
         )
 
     @app.get("/favicon.ico", include_in_schema=False)
-    def favicon() -> Response:
-        raise HTTPException(status_code=404)
+    def favicon() -> FileResponse:
+        return FileResponse(
+            APP_DIR / "static" / "brand" / "favicon.ico",
+            media_type="image/x-icon",
+        )
 
     return app

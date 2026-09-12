@@ -10,6 +10,8 @@
     <string>CSIOpenBaseMac</string>
     <key>CFBundleIdentifier</key>
     <string>cn.aicsi.csi-openbase.mac</string>
+    <key>CFBundleIconFile</key>
+    <string>CSI-OpenBase.icns</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>NSHumanReadableCopyright</key>

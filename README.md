@@ -1,5 +1,9 @@
 # CSI OpenBase for macOS
 
+<p align="center">
+  <img src=".github/assets/csi-openbase-logo.svg" alt="CSI OpenBase" width="420">
+</p>
+
 这是自包含的 CSI OpenBase macOS 项目。原生宿主使用 SwiftUI 和 WKWebView；
 仓库内的 `python-web/` 提供创作者授权、表格导出、视频归档、评论采集、持久化
 和本地 Web 界面。项目不包含 CSI Core 的评分、权重、行业基准或商业报告逻辑。

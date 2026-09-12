@@ -136,14 +136,10 @@ code {
 }
 
 .brand-mark {
-  position: relative;
-  width: 25px;
-  height: 25px;
-  flex: 0 0 25px;
-  border: 6px solid var(--ink);
-  border-top-color: var(--accent);
-  border-right-color: var(--teal);
-  border-radius: 50%;
+  display: block;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
 }
 
 .brand strong,

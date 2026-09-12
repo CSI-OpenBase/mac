@@ -55,6 +55,11 @@ def test_local_home_and_manual_authorization_job(tmp_path: Path) -> None:
         response = client.get("/")
         assert response.status_code == 200
         assert "本地归档" in response.text
+        assert "brand/openbase-mark-reversed.svg" in response.text
+        favicon_response = client.get("/favicon.ico")
+        assert favicon_response.status_code == 200
+        assert favicon_response.headers["content-type"] == "image/x-icon"
+        assert favicon_response.content.startswith(b"\x00\x00\x01\x00")
         token = csrf(client)
         response = client.post(
             "/actions/authorize", data={"csrf_token": token}, follow_redirects=False
@@ -296,6 +301,7 @@ def test_desktop_token_guards_ui_and_identifies_health_instance(tmp_path: Path) 
     ) as client:
         assert client.get("/health").status_code == 401
         assert client.get("/").status_code == 401
+        assert client.get("/favicon.ico").status_code == 200
         response = client.get(
             "/health", headers={"X-CSI-Desktop-Token": "desktop-secret"}
         )

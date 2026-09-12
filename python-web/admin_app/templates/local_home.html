@@ -4,13 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>CSI OpenBase</title>
+  <link rel="icon" type="image/svg+xml" href="/static/brand/favicon.svg">
+  <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
+  <link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
   <link rel="stylesheet" href="/static/local.css">
   <script src="/static/vendor/lucide.min.js" defer></script>
   <script src="/static/local.js" defer></script>
 </head>
 <body data-active-jobs="{{ active_jobs }}" data-latest-job="{{ jobs[0].id if jobs else '' }}">
   <header class="app-header">
-    <div class="brand"><span class="brand-mark">CSI</span><strong>OpenBase</strong><span class="brand-version">v{{ app_version }}</span></div>
+    <div class="brand"><img class="brand-mark" src="/static/brand/openbase-mark-reversed.svg" width="28" height="28" alt="" aria-hidden="true"><strong>CSI OpenBase</strong><span class="brand-version">v{{ app_version }}</span></div>
     <div class="header-status">
       <span class="status-dot {{ 'ok' if authorized else 'idle' }}"></span>
       <span>{{ account.display_name if authorized else '未连接账号' }}</span>

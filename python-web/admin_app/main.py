@@ -9,7 +9,13 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
@@ -301,8 +307,11 @@ def create_app(
             )
 
     @app.get("/favicon.ico", include_in_schema=False)
-    def favicon() -> Response:
-        return Response(status_code=204)
+    def favicon() -> FileResponse:
+        return FileResponse(
+            APP_DIR / "static" / "brand" / "favicon.ico",
+            media_type="image/x-icon",
+        )
 
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request) -> HTMLResponse:

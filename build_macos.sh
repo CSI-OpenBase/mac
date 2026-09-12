@@ -7,7 +7,7 @@ fail() {
 }
 
 [[ "$(uname -s)" == "Darwin" ]] || fail "build_macos.sh must run on macOS."
-for tool in realpath file xcrun plutil ditto swift; do
+for tool in realpath file xcrun plutil ditto swift iconutil; do
     command -v "$tool" >/dev/null 2>&1 || fail "Required tool was not found: $tool"
 done
 
@@ -25,6 +25,7 @@ PYINSTALLER_CONFIG_DIR="$BUILD_ROOT/pyinstaller-config"
 LICENSE_STAGE="$BUILD_ROOT/backend-licenses"
 APP_BUNDLE="$DIST_DIR/CSI OpenBase.app"
 ARCHIVE="$DIST_DIR/CSI-OpenBase-macOS.zip"
+APP_ICONSET="$PROJECT_DIR/Packaging/AppIcon.iconset"
 
 assert_safe_output_path() {
     local target="$1" relative current old_ifs part canonical
@@ -147,6 +148,14 @@ for path in LICENSE NOTICE Packaging/Info.plist Packaging/backend_entry.py \
     Packaging/backend.entitlements Packaging/chromium.entitlements \
     scripts/write_dependency_licenses.py; do
     [[ -f "$PROJECT_DIR/$path" ]] || fail "Missing mac project file: $path"
+done
+
+[[ -d "$APP_ICONSET" ]] || fail "Missing mac app iconset: $APP_ICONSET"
+for icon in icon_16x16.png icon_16x16@2x.png icon_32x32.png \
+    icon_32x32@2x.png icon_128x128.png icon_128x128@2x.png \
+    icon_256x256.png icon_256x256@2x.png icon_512x512.png \
+    icon_512x512@2x.png; do
+    [[ -f "$APP_ICONSET/$icon" ]] || fail "Missing mac app icon: $icon"
 done
 
 INPUT_MODE=""
@@ -410,6 +419,7 @@ BACKEND_DESTINATION="$RESOURCES/backend"
 mkdir -p "$CONTENTS/MacOS" "$BACKEND_DESTINATION"
 cp "$HOST_BINARY" "$CONTENTS/MacOS/CSIOpenBaseMac"
 cp "$LAUNCHER_BINARY" "$RESOURCES/CSIBackendLauncher"
+iconutil --convert icns --output "$RESOURCES/CSI-OpenBase.icns" "$APP_ICONSET"
 cp "$PROJECT_DIR/Packaging/Info.plist" "$CONTENTS/Info.plist"
 chmod +x "$CONTENTS/MacOS/CSIOpenBaseMac" "$RESOURCES/CSIBackendLauncher"
 

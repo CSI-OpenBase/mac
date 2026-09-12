@@ -190,13 +190,18 @@ def test_videos_page_uses_repository_filters_and_csrf_rejects_missing_token(
 
     with TestClient(app) as client:
         analysis_response = client.get("/analysis")
+        favicon_response = client.get("/favicon.ico")
         response = client.get(
             "/videos",
             params={"q": "离合器", "status": "pending", "collection_id": "collection-1"},
         )
 
         assert analysis_response.status_code == 200
+        assert favicon_response.status_code == 200
+        assert favicon_response.headers["content-type"] == "image/x-icon"
+        assert favicon_response.content.startswith(b"\x00\x00\x01\x00")
         assert "CSI OpenBase" in analysis_response.text
+        assert "brand/openbase-mark.svg" in analysis_response.text
         assert "前往 CSI 深度分析" in analysis_response.text
         assert "当前缺少：账号画像、作品表现、受众画像、评论语料。" in analysis_response.text
         assert re.search(r"20\d\d-\d\d-\d\d \d\d:\d\d", analysis_response.text)
