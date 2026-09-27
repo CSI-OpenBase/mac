@@ -84,7 +84,7 @@ class LocalSettings:
         default_factory=lambda: secrets.token_urlsafe(48), repr=False
     )
     authorization_timeout_seconds: int = 300
-    browser_capture_seconds: int = 120
+    browser_capture_seconds: int = 300
 
     @property
     def database_path(self) -> Path:
@@ -192,7 +192,7 @@ def load_local_settings() -> LocalSettings:
             os.environ.get("CSI_OPENBASE_AUTH_TIMEOUT", "300")
         ),
         browser_capture_seconds=int(
-            os.environ.get("CSI_OPENBASE_CAPTURE_SECONDS", "120")
+            os.environ.get("CSI_OPENBASE_CAPTURE_SECONDS", "300")
         ),
     )
     if settings.host not in {"127.0.0.1", "localhost", "::1"}:

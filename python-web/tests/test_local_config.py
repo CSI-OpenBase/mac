@@ -36,6 +36,17 @@ def test_prepares_absolute_comment_export_directory(tmp_path: Path) -> None:
     assert list(selected.iterdir()) == []
 
 
+def test_default_comment_capture_limit_allows_large_reply_threads(
+    tmp_path: Path,
+) -> None:
+    settings = LocalSettings(
+        data_home=tmp_path / "workspace",
+        session_home=tmp_path / "sessions",
+    )
+
+    assert settings.browser_capture_seconds == 300
+
+
 def test_rejects_relative_or_managed_comment_export_directory(
     tmp_path: Path,
 ) -> None:

@@ -355,12 +355,14 @@ def validate_record_relations(
     records: Iterable[dict[str, Any]],
     *,
     require_complete_reply_counts: bool = False,
+    allow_reply_count_overflow: bool = False,
 ) -> None:
     """Validate hierarchy and reply-count consistency across canonical records.
 
     A partial collection may contain fewer replies than the root comment reports,
     so equality is optional. Having more captured replies than the platform count
-    is always inconsistent and is rejected.
+    is rejected by default. Live collectors may defer that one check to their
+    pagination-aware completeness policy while retaining every hierarchy check.
     """
     materialized = list(records)
     index: dict[tuple[str, str], dict[str, Any]] = {}
@@ -462,10 +464,11 @@ def validate_record_relations(
         captured = replies_by_root.get(key, 0)
         declared = record["reply_count"]
         if captured > declared:
-            errors.append(
-                f"root comment {record['comment_id']} reports {declared} replies "
-                f"but {captured} are stored"
-            )
+            if not allow_reply_count_overflow:
+                errors.append(
+                    f"root comment {record['comment_id']} reports {declared} replies "
+                    f"but {captured} are stored"
+                )
         elif require_complete_reply_counts and captured != declared:
             errors.append(
                 f"root comment {record['comment_id']} reports {declared} replies "

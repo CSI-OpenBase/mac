@@ -58,6 +58,13 @@ BLOCKER_SCOPE_SELECTOR = "dialog, [role='dialog'], [role='alert'], form"
 ZERO_IDS = {"", "0", "-1", "None", "null"}
 REPORTED_TOTAL_TOLERANCE_PERCENT = 5
 UNAVAILABLE_PARENT_WARNING = "references an unavailable parent and was excluded"
+MAX_EXPANSION_SCAN = 64
+FAST_HUMAN_RENDER_WAIT_MS = 200
+FAST_HUMAN_READ_BASE_MS = 300
+FAST_HUMAN_READ_PER_COMMENT_MS = 90
+FAST_HUMAN_READ_MAX_MS = 1_500
+BLOCKER_POLL_INTERVAL_MS = 500
+DEFAULT_CAPTURE_SECONDS = 300
 
 
 def utc_now() -> str:
@@ -304,6 +311,10 @@ class ResponseAccumulator:
     @property
     def saw_comment_response(self) -> bool:
         return self._root_response_seen or self._reply_pages > 0
+
+    @property
+    def observed_count(self) -> int:
+        return len(self._comments)
 
     def set_page_title(self, title: str) -> None:
         title = title.strip()
@@ -607,7 +618,10 @@ class ResponseAccumulator:
             candidates = retained
         valid = candidates
         try:
-            validate_record_relations(valid)
+            # Platform reply totals can lag the terminal reply page. Defer only
+            # that count comparison to assessment(), which also knows whether
+            # pagination closed and whether unavailable parents were excluded.
+            validate_record_relations(valid, allow_reply_count_overflow=True)
         except CommentDataError as exc:
             errors.append(str(exc))
         return (
@@ -774,30 +788,34 @@ def _page_blocker(page: Any) -> str | None:
     return None
 
 
-def _drive_comment_view(page: Any) -> None:
-    """Best-effort expansion; the response accumulator remains the authority."""
+def _drive_comment_view(page: Any) -> int:
+    """Click one expansion or scroll, preserving click-read alternation."""
     try:
         matches = page.get_by_text(EXPAND_TEXT_RE)
-        for index in range(min(matches.count(), 24)):
+        visible_count = min(matches.count(), MAX_EXPANSION_SCAN)
+        # Work backwards because each successful expansion can remove its own
+        # control and shift the remaining live locator indexes.
+        for index in range(visible_count - 1, -1, -1):
             candidate = matches.nth(index)
             if candidate.is_visible():
                 try:
-                    candidate.click(timeout=700)
+                    candidate.click(timeout=350)
+                    return 1
                 except Exception:
                     pass
     except Exception:
         pass
     try:
-        page.mouse.wheel(0, 1_200)
+        page.mouse.wheel(0, 1_800)
         page.evaluate(
             """
             () => {
-              window.scrollBy(0, 500);
+              window.scrollBy(0, 900);
               for (const element of document.querySelectorAll('*')) {
                 const style = getComputedStyle(element);
                 if ((style.overflowY === 'auto' || style.overflowY === 'scroll') &&
                     element.scrollHeight > element.clientHeight + 100) {
-                  element.scrollTop += Math.max(500, element.clientHeight * 0.8);
+                  element.scrollTop += Math.max(900, element.clientHeight * 0.9);
                 }
               }
             }
@@ -805,6 +823,16 @@ def _drive_comment_view(page: Any) -> None:
         )
     except Exception:
         pass
+    return 0
+
+
+def _fast_human_read_ms(new_records: int) -> int:
+    readable_records = max(1, int(new_records))
+    return min(
+        FAST_HUMAN_READ_MAX_MS,
+        FAST_HUMAN_READ_BASE_MS
+        + readable_records * FAST_HUMAN_READ_PER_COMMENT_MS,
+    )
 
 
 def _launch_persistent_context(playwright: Any, profile: Path) -> Any:
@@ -852,7 +880,7 @@ def collect_video(
     video_title: str = "",
     batches_dir: Path | None = None,
     browser_profile_dir: Path | None = None,
-    capture_seconds: int = 120,
+    capture_seconds: int = DEFAULT_CAPTURE_SECONDS,
     trigger: str = "auto",
 ) -> CollectionResult:
     """Open a headed persistent browser and capture one video conservatively."""
@@ -933,11 +961,18 @@ def collect_video(
                             # Keep the headed window open so the operator can log
                             # in or solve a verification challenge during this run.
                             active_blocker = blocker
-                            page.wait_for_timeout(1_000)
+                            page.wait_for_timeout(BLOCKER_POLL_INTERVAL_MS)
                             continue
                         active_blocker = None
-                        _drive_comment_view(page)
-                        page.wait_for_timeout(1_000)
+                        observed_before = accumulator.observed_count
+                        expanded = _drive_comment_view(page)
+                        page.wait_for_timeout(FAST_HUMAN_RENDER_WAIT_MS)
+                        if expanded:
+                            page.wait_for_timeout(
+                                _fast_human_read_ms(
+                                    accumulator.observed_count - observed_before
+                                )
+                            )
                         assessment = accumulator.assessment()
                         complete_streak = (
                             complete_streak + 1 if assessment.is_finished else 0
@@ -972,6 +1007,12 @@ def collect_video(
 
     diagnostics = accumulator.diagnostics(records, warnings=warnings)
     diagnostics["batch_name"] = batch_name
+    diagnostics["capture_policy"] = "fastest-human"
+    diagnostics["capture_limit_seconds"] = capture_seconds
+    diagnostics["render_wait_ms"] = FAST_HUMAN_RENDER_WAIT_MS
+    diagnostics["read_base_ms"] = FAST_HUMAN_READ_BASE_MS
+    diagnostics["read_per_comment_ms"] = FAST_HUMAN_READ_PER_COMMENT_MS
+    diagnostics["read_max_ms"] = FAST_HUMAN_READ_MAX_MS
     message = _capture_message(
         status,
         len(records),

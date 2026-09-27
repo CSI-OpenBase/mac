@@ -12,10 +12,13 @@ import admin_app.collector as collector_module
 import admin_app.jobs as jobs_module
 import admin_app.runtime_paths as runtime_paths
 from admin_app.collector import (
+    FAST_HUMAN_READ_MAX_MS,
+    MAX_EXPANSION_SCAN,
     CollectionResult,
     EXPAND_TEXT_RE,
     ResponseAccumulator,
     _drive_comment_view,
+    _fast_human_read_ms,
     _is_relevant_comment_response,
     _launch_persistent_context,
     _validate_browser_profile_dir,
@@ -398,6 +401,58 @@ def test_response_accumulator_isolates_reply_with_unavailable_parent() -> None:
     assert diagnostics["rejected_records"] == 1
     assert diagnostics["orphan_reply_count"] == 1
     assert diagnostics["warnings"] == list(assessment.warnings)
+
+
+def test_terminal_reply_overflow_with_orphan_is_complete() -> None:
+    accumulator = _accumulator(declared_replies=1, include_reply=False)
+    orphan_id = "3333333333333333333"
+    accumulator.consume(
+        "https://www.douyin.com/aweme/v1/web/comment/list/reply/"
+        f"?aweme_id={VIDEO_ID}&comment_id={ROOT_ID}",
+        {
+            "status_code": 0,
+            "has_more": False,
+            "comments": [
+                {
+                    "cid": REPLY_ID,
+                    "aweme_id": VIDEO_ID,
+                    "root_comment_id": ROOT_ID,
+                    "text": "第一条有效回复",
+                    "user": {"uid": "viewer-reply-one"},
+                },
+                {
+                    "cid": "5555555555555555555",
+                    "aweme_id": VIDEO_ID,
+                    "root_comment_id": ROOT_ID,
+                    "text": "平台声明数之外的有效回复",
+                    "user": {"uid": "viewer-reply-two"},
+                },
+                {
+                    "cid": orphan_id,
+                    "aweme_id": VIDEO_ID,
+                    "root_comment_id": ROOT_ID,
+                    "reply_to_reply_id": "4444444444444444444",
+                    "text": "父评论已不可见",
+                    "user": {"uid": "viewer-orphan"},
+                },
+            ],
+        },
+    )
+
+    assessment = accumulator.assessment()
+
+    assert assessment.status == "complete"
+    assert assessment.blockers == ()
+    assert len(assessment.records) == 3
+    assert any(orphan_id in warning for warning in assessment.warnings)
+    assert any(
+        f"Root {ROOT_ID} declares 1 replies but 2 were captured" in warning
+        for warning in assessment.warnings
+    )
+    assert not any(
+        "relation validation failed" in warning
+        for warning in assessment.warnings
+    )
 
 
 def test_response_accumulator_cascades_unavailable_parent_exclusion() -> None:
@@ -840,12 +895,12 @@ def test_comment_driver_expands_and_scrolls() -> None:
             return True
 
         def click(self, *, timeout: int) -> None:
-            assert timeout == 700
+            assert timeout == 350
             clicked.append(self.index)
 
     class Matches:
         def count(self) -> int:
-            return 30
+            return 80
 
         def nth(self, index: int) -> Candidate:
             return Candidate(index)
@@ -864,12 +919,52 @@ def test_comment_driver_expands_and_scrolls() -> None:
         def evaluate(self, script: str) -> None:
             evaluations.append(script)
 
-    _drive_comment_view(Page())
+    expanded = _drive_comment_view(Page())
 
-    assert clicked == list(range(24))
-    assert wheels == [(0, 1_200)]
+    assert expanded == 1
+    assert clicked == [MAX_EXPANSION_SCAN - 1]
+    assert wheels == []
+    assert evaluations == []
+
+
+def test_comment_driver_scrolls_only_when_no_expansion_is_visible() -> None:
+    wheels: list[tuple[int, int]] = []
+    evaluations: list[str] = []
+
+    class Candidate:
+        def is_visible(self) -> bool:
+            return False
+
+    class Matches:
+        def count(self) -> int:
+            return 3
+
+        def nth(self, index: int) -> Candidate:
+            return Candidate()
+
+    class Mouse:
+        def wheel(self, x: int, y: int) -> None:
+            wheels.append((x, y))
+
+    class Page:
+        mouse = Mouse()
+
+        def get_by_text(self, pattern) -> Matches:
+            return Matches()
+
+        def evaluate(self, script: str) -> None:
+            evaluations.append(script)
+
+    assert _drive_comment_view(Page()) == 0
+    assert wheels == [(0, 1_800)]
     assert len(evaluations) == 1
     assert "scrollTop" in evaluations[0]
+
+
+def test_fast_human_read_time_scales_and_is_bounded() -> None:
+    assert _fast_human_read_ms(0) == 390
+    assert _fast_human_read_ms(3) == 570
+    assert _fast_human_read_ms(10_000) == FAST_HUMAN_READ_MAX_MS
 
 
 @pytest.mark.parametrize(
