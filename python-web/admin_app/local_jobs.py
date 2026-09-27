@@ -12,7 +12,7 @@ import time
 from contextlib import suppress
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from .collector import CollectionResult, collect_video
 from .douyin_exports import (
@@ -44,6 +44,10 @@ from .video_archive import (
 
 
 TaskFunction = Callable[..., Any]
+COMMENT_EXPORT_MODES = frozenset({"incremental", "full"})
+COMMENT_INDEX_FILENAME = "comments.jsonl"
+COMMENT_MANIFEST_FILENAME = "manifest.json"
+COMMENT_VOLATILE_FIELDS = frozenset({"collected_at", "collection_batch"})
 
 
 class LocalJobBlocked(RuntimeError):
@@ -66,6 +70,196 @@ def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
         with suppress(FileNotFoundError):
             os.unlink(temporary_name)
         raise
+
+
+def _atomic_jsonl(path: Path, records: Iterable[Mapping[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            for record in records:
+                json.dump(
+                    dict(record),
+                    handle,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_name, path)
+    except Exception:
+        with suppress(FileNotFoundError):
+            os.unlink(temporary_name)
+        raise
+
+
+def _comment_key(record: Mapping[str, Any]) -> tuple[str, str]:
+    platform = str(record.get("platform") or "douyin").strip()
+    comment_id = str(record.get("comment_id") or "").strip()
+    if not platform or not comment_id:
+        raise LocalJobBlocked("已有评论基线缺少 platform 或 comment_id")
+    return platform, comment_id
+
+
+def _load_comment_records(path: Path) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    try:
+        with path.open("r", encoding="utf-8-sig") as handle:
+            for line_number, line in enumerate(handle, start=1):
+                if not line.strip():
+                    continue
+                value = json.loads(line)
+                if not isinstance(value, dict):
+                    raise ValueError(f"line {line_number} is not an object")
+                _comment_key(value)
+                records.append(value)
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise LocalJobBlocked(f"无法读取已有评论基线 {path.name}：{exc}") from exc
+    return records
+
+
+def _historical_snapshot(comments_root: Path) -> Path | None:
+    if not comments_root.is_dir():
+        return None
+    run_directories = sorted(
+        (
+            path
+            for path in comments_root.iterdir()
+            if path.is_dir() and not path.is_symlink()
+        ),
+        key=lambda path: path.name,
+        reverse=True,
+    )
+    for run_directory in run_directories:
+        manifest_path = run_directory / COMMENT_MANIFEST_FILENAME
+        if manifest_path.is_file() and not manifest_path.is_symlink():
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                continue
+            if (
+                not isinstance(manifest, dict)
+                or manifest.get("usable_as_baseline") is False
+            ):
+                continue
+            snapshot_name = str(manifest.get("snapshot_file") or "").strip()
+            if snapshot_name and Path(snapshot_name).name == snapshot_name:
+                candidate = run_directory / snapshot_name
+                if candidate.is_file() and not candidate.is_symlink():
+                    return candidate
+        candidates = sorted(
+            (
+                path
+                for path in run_directory.glob("*.jsonl")
+                if path.is_file()
+                and not path.is_symlink()
+                and "incremental" not in path.stem.casefold()
+            ),
+            key=lambda path: path.name,
+        )
+        if candidates:
+            return candidates[0]
+    return None
+
+
+def _load_comment_baseline(
+    comments_root: Path,
+) -> tuple[list[dict[str, Any]], Path | None]:
+    canonical_path = comments_root / COMMENT_INDEX_FILENAME
+    if canonical_path.is_file() and not canonical_path.is_symlink():
+        return _load_comment_records(canonical_path), canonical_path
+    historical_path = _historical_snapshot(comments_root)
+    if historical_path is None:
+        return [], None
+    return _load_comment_records(historical_path), historical_path
+
+
+def _comment_state(record: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in record.items()
+        if key not in COMMENT_VOLATILE_FIELDS
+    }
+
+
+def _comment_increment(
+    baseline: Iterable[Mapping[str, Any]],
+    observed: Iterable[Mapping[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
+    baseline_order: list[tuple[str, str]] = []
+    baseline_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for raw in baseline:
+        record = dict(raw)
+        key = _comment_key(record)
+        if key not in baseline_by_key:
+            baseline_order.append(key)
+        baseline_by_key[key] = record
+
+    observed_order: list[tuple[str, str]] = []
+    observed_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for raw in observed:
+        record = dict(raw)
+        key = _comment_key(record)
+        if key not in observed_by_key:
+            observed_order.append(key)
+        observed_by_key[key] = record
+
+    new_keys = {key for key in observed_order if key not in baseline_by_key}
+    updated_keys = {
+        key
+        for key in observed_order
+        if key in baseline_by_key
+        and _comment_state(observed_by_key[key])
+        != _comment_state(baseline_by_key[key])
+    }
+    canonical_order = [*baseline_order]
+    canonical_by_key = dict(baseline_by_key)
+    for key in observed_order:
+        if key not in canonical_by_key:
+            canonical_order.append(key)
+        canonical_by_key[key] = observed_by_key[key]
+    canonical = [canonical_by_key[key] for key in canonical_order]
+
+    change_keys = new_keys | updated_keys
+    delivery_keys: list[tuple[str, str]] = []
+    delivered: set[tuple[str, str]] = set()
+    visiting: set[tuple[str, str]] = set()
+
+    def append_with_ancestry(key: tuple[str, str]) -> None:
+        if key in delivered:
+            return
+        if key in visiting:
+            raise LocalJobBlocked("评论增量基线包含循环父子关系")
+        visiting.add(key)
+        record = canonical_by_key[key]
+        platform = key[0]
+        for field in ("root_comment_id", "parent_comment_id"):
+            related_id = str(record.get(field) or "").strip()
+            related_key = (platform, related_id)
+            if related_id and related_key in canonical_by_key:
+                append_with_ancestry(related_key)
+        visiting.remove(key)
+        delivered.add(key)
+        delivery_keys.append(key)
+
+    for key in observed_order:
+        if key in change_keys:
+            append_with_ancestry(key)
+    delta = [canonical_by_key[key] for key in delivery_keys]
+    stats = {
+        "baseline_count": len(baseline_by_key),
+        "snapshot_count": len(observed_by_key),
+        "new_count": len(new_keys),
+        "updated_count": len(updated_keys),
+        "unchanged_count": len(observed_by_key) - len(new_keys) - len(updated_keys),
+        "context_count": len(delivery_keys) - len(change_keys),
+        "not_observed_count": len(set(baseline_by_key) - set(observed_by_key)),
+        "canonical_count": len(canonical_by_key),
+    }
+    return delta, canonical, stats
 
 
 def _relative(path: Path, root: Path) -> str:
@@ -183,6 +377,11 @@ class LocalJobRunner:
                 if not video_id or self.store.get_video(video_id) is None:
                     raise KeyError("video does not exist in the local archive")
                 payload = {**payload, "trigger": "user"}
+            if kind == "comments":
+                mode = str(payload.get("mode") or "incremental")
+                if mode not in COMMENT_EXPORT_MODES:
+                    raise ValueError("comment export mode must be incremental or full")
+                payload = {**payload, "mode": mode}
             job = self.store.create_job(
                 kind, video_id=video_id, payload=payload
             )
@@ -254,7 +453,10 @@ class LocalJobRunner:
         if kind == "comment_count":
             return self._run_comment_count(str(job.get("video_id") or ""))
         if kind == "comments":
-            return self._run_comments(str(job.get("video_id") or ""))
+            return self._run_comments(
+                str(job.get("video_id") or ""),
+                mode=str(payload.get("mode") or "incremental"),
+            )
         raise ValueError(f"unsupported local job kind: {kind}")
 
     def _expected_handle(self) -> str | None:
@@ -498,15 +700,20 @@ class LocalJobRunner:
         message = f"评论数 {result['current_count']:,}，{change}"
         return "succeeded", message, {**result, "content_exported": False}
 
-    def _run_comments(self, video_id: str) -> tuple[str, str, dict[str, Any]]:
+    def _run_comments(
+        self, video_id: str, *, mode: str
+    ) -> tuple[str, str, dict[str, Any]]:
         if not VIDEO_ID_RE.fullmatch(video_id):
             raise ValueError("video_id must contain 8-32 digits")
+        if mode not in COMMENT_EXPORT_MODES:
+            raise ValueError("comment export mode must be incremental or full")
         video = self.store.get_video(video_id)
         if video is None:
             raise KeyError("video does not exist in the local archive")
         comments_root = (
             self.settings.works_dir / "videos" / "douyin" / video_id / "comments"
         )
+        baseline, baseline_path = _load_comment_baseline(comments_root)
         run_directory = _allocate_timestamp_dir(comments_root)
         result: CollectionResult = self.comment_collector(
             video_id=video_id,
@@ -518,14 +725,54 @@ class LocalJobRunner:
             trigger="manual",
         )
         self._raise_if_force_interrupted()
-        count = len(result.records)
-        exported_at = (
-            str(result.records[0].get("collected_at")) if result.records else utc_now()
+        snapshot_records = [dict(record) for record in result.records]
+        delta_records, canonical_records, increment = _comment_increment(
+            baseline, snapshot_records
         )
-        if result.status in {"complete", "partial"}:
+        count = len(snapshot_records)
+        exported_at = (
+            str(snapshot_records[0].get("collected_at"))
+            if snapshot_records
+            else utc_now()
+        )
+        usable = result.status in {"complete", "partial"}
+        snapshot_path = result.batch_path
+        if usable and snapshot_path is None:
+            snapshot_path = run_directory / "comments-full.jsonl"
+            _atomic_jsonl(snapshot_path, snapshot_records)
+
+        delta_path: Path | None = None
+        export_source = snapshot_path
+        if usable:
+            _atomic_jsonl(comments_root / COMMENT_INDEX_FILENAME, canonical_records)
+            if mode == "incremental":
+                snapshot_stem = snapshot_path.stem if snapshot_path else "comments"
+                delta_path = run_directory / f"{snapshot_stem}-incremental.jsonl"
+                _atomic_jsonl(delta_path, delta_records)
+                export_source = delta_path
             self.store.record_comment_export(
                 video_id, count=count, exported_at=exported_at
             )
+
+        manifest_path = run_directory / COMMENT_MANIFEST_FILENAME
+        _atomic_json(
+            manifest_path,
+            {
+                "schema_version": 1,
+                "video_id": video_id,
+                "mode": mode,
+                "status": result.status,
+                "usable_as_baseline": usable,
+                "baseline_file": (
+                    _relative(baseline_path, comments_root) if baseline_path else None
+                ),
+                "snapshot_file": snapshot_path.name if snapshot_path else None,
+                "incremental_file": delta_path.name if delta_path else None,
+                "export_file": export_source.name if export_source and usable else None,
+                "stats": increment,
+                "diagnostics": dict(result.diagnostics),
+            },
+        )
         external_file: Path | None = None
         export_warning = ""
         preferences = self.store.get_meta(LOCAL_PREFERENCES_META_KEY, {})
@@ -534,7 +781,7 @@ class LocalJobRunner:
             if isinstance(preferences, Mapping)
             else None
         )
-        if result.batch_path and result.status in {"complete", "partial"}:
+        if export_source and usable:
             try:
                 export_root = prepare_comment_export_directory(
                     str(configured_directory or ""), self.settings
@@ -544,26 +791,62 @@ class LocalJobRunner:
                         export_root
                         / video_id
                         / run_directory.name
-                        / result.batch_path.name
+                        / export_source.name
                     )
-                    _copy_file_atomic(result.batch_path, external_file)
+                    _copy_file_atomic(export_source, external_file)
             except (OSError, ValueError) as exc:
                 export_warning = f"；外部目录写入失败：{exc}"
         payload = {
             "video_id": video_id,
             "status": result.status,
+            "mode": mode,
             "count": count,
+            "export_count": len(delta_records) if mode == "incremental" else count,
+            **increment,
             "directory": _relative(run_directory, self.settings.data_home),
             "file": (
-                _relative(result.batch_path, self.settings.data_home)
-                if result.batch_path
+                _relative(export_source, self.settings.data_home)
+                if export_source and usable
                 else None
             ),
+            "snapshot_file": (
+                _relative(snapshot_path, self.settings.data_home)
+                if snapshot_path
+                else None
+            ),
+            "manifest": _relative(manifest_path, self.settings.data_home),
             "export_file": str(external_file) if external_file else None,
             "diagnostics": dict(result.diagnostics),
         }
         status = result.status if result.status in {"partial", "blocked"} else "succeeded"
         message = result.message
+        if usable:
+            if mode == "incremental":
+                message = (
+                    f"{message}；增量新增 {increment['new_count']} 条，"
+                    f"更新 {increment['updated_count']} 条，"
+                    f"未变化 {increment['unchanged_count']} 条"
+                )
+                if increment["context_count"]:
+                    message = (
+                        f"{message}，附带关系上下文 {increment['context_count']} 条"
+                    )
+            else:
+                message = (
+                    f"{message}；完整同步 {count} 条，"
+                    f"其中新增 {increment['new_count']} 条、"
+                    f"更新 {increment['updated_count']} 条"
+                )
+            if increment["not_observed_count"]:
+                qualifier = (
+                    "本次未观察到（采集不完整）"
+                    if result.status == "partial"
+                    else "平台当前不可见"
+                )
+                message = (
+                    f"{message}；{increment['not_observed_count']} 条历史评论"
+                    f"{qualifier}，未从本地索引删除"
+                )
         if external_file:
             message = f"{message}；已导出到 {external_file.parent}"
         elif export_warning:

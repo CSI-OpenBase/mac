@@ -265,7 +265,12 @@ def test_comment_export_is_timestamped_and_records_user_trigger(tmp_path: Path) 
 
     assert finished["status"] == "succeeded"
     assert finished["payload"]["trigger"] == "user"
-    assert finished["result"]["file"].endswith("comments.jsonl")
+    assert finished["result"]["mode"] == "incremental"
+    assert finished["result"]["new_count"] == 1
+    assert finished["result"]["updated_count"] == 0
+    assert finished["result"]["export_count"] == 1
+    assert finished["result"]["file"].endswith("comments-incremental.jsonl")
+    assert finished["result"]["snapshot_file"].endswith("comments.jsonl")
     assert "comments/20" in finished["result"]["directory"]
     external_file = Path(finished["result"]["export_file"])
     assert external_file.is_file()
@@ -275,6 +280,190 @@ def test_comment_export_is_timestamped_and_records_user_trigger(tmp_path: Path) 
     )
     assert "已导出到" in finished["message"]
     assert store.get_video(VIDEO_ID)["comment_count"] == 1
+
+
+def test_incremental_comment_export_tracks_new_updates_and_retains_missing_history(
+    tmp_path: Path,
+) -> None:
+    settings = make_settings(tmp_path)
+    store = LocalStore(settings.database_path)
+    store.upsert_videos(
+        [
+            {
+                "video_id": VIDEO_ID,
+                "title": "测试视频",
+                "video_url": f"https://www.douyin.com/video/{VIDEO_ID}",
+                "manifest_path": f"works/videos/douyin/{VIDEO_ID}/manifest.json",
+                "first_seen_at": "2026-09-07T00:00:00Z",
+                "last_seen_at": "2026-09-07T00:00:00Z",
+            }
+        ]
+    )
+    captures = [
+        [
+            {
+                "platform": "douyin",
+                "comment_id": "comment-1",
+                "comment_type": "root",
+                "parent_comment_id": None,
+                "root_comment_id": None,
+                "text": "保持不变",
+                "like_count": 0,
+                "collected_at": "2026-09-07T01:00:00Z",
+                "collection_batch": "batch-1",
+            },
+            {
+                "platform": "douyin",
+                "comment_id": "comment-2",
+                "comment_type": "root",
+                "parent_comment_id": None,
+                "root_comment_id": None,
+                "text": "稍后更新",
+                "like_count": 0,
+                "collected_at": "2026-09-07T01:00:00Z",
+                "collection_batch": "batch-1",
+            },
+        ],
+        [
+            {
+                "platform": "douyin",
+                "comment_id": "comment-1",
+                "comment_type": "root",
+                "parent_comment_id": None,
+                "root_comment_id": None,
+                "text": "保持不变",
+                "like_count": 0,
+                "collected_at": "2026-09-08T01:00:00Z",
+                "collection_batch": "batch-2",
+            },
+            {
+                "platform": "douyin",
+                "comment_id": "comment-2",
+                "comment_type": "root",
+                "parent_comment_id": None,
+                "root_comment_id": None,
+                "text": "稍后更新",
+                "like_count": 5,
+                "collected_at": "2026-09-08T01:00:00Z",
+                "collection_batch": "batch-2",
+            },
+            {
+                "platform": "douyin",
+                "comment_id": "comment-3",
+                "comment_type": "reply",
+                "parent_comment_id": "comment-1",
+                "root_comment_id": "comment-1",
+                "text": "新增评论",
+                "like_count": 0,
+                "collected_at": "2026-09-08T01:00:00Z",
+                "collection_batch": "batch-2",
+            },
+        ],
+        [
+            {
+                "platform": "douyin",
+                "comment_id": "comment-1",
+                "comment_type": "root",
+                "parent_comment_id": None,
+                "root_comment_id": None,
+                "text": "保持不变",
+                "like_count": 0,
+                "collected_at": "2026-09-09T01:00:00Z",
+                "collection_batch": "batch-3",
+            },
+            {
+                "platform": "douyin",
+                "comment_id": "comment-3",
+                "comment_type": "reply",
+                "parent_comment_id": "comment-1",
+                "root_comment_id": "comment-1",
+                "text": "新增评论",
+                "like_count": 0,
+                "collected_at": "2026-09-09T01:00:00Z",
+                "collection_batch": "batch-3",
+            },
+        ],
+    ]
+    call_index = 0
+
+    def fake_comments(**kwargs: Any) -> CollectionResult:
+        nonlocal call_index
+        records = captures[call_index]
+        call_index += 1
+        path = Path(kwargs["batches_dir"]) / f"batch-{call_index}.jsonl"
+        path.write_text(
+            "".join(
+                json.dumps(record, ensure_ascii=False) + "\n"
+                for record in records
+            ),
+            encoding="utf-8",
+        )
+        return CollectionResult(
+            status="complete",
+            message="complete",
+            video_id=VIDEO_ID,
+            records=tuple(records),
+            batch_path=path,
+            diagnostics={"anonymous": True},
+        )
+
+    runner = LocalJobRunner(store, settings, comment_collector=fake_comments)
+    try:
+        first = wait_for_job(
+            store,
+            runner.submit("comments", video_id=VIDEO_ID, mode="incremental")["id"],
+        )
+        second = wait_for_job(
+            store,
+            runner.submit("comments", video_id=VIDEO_ID, mode="incremental")["id"],
+        )
+        third = wait_for_job(
+            store,
+            runner.submit("comments", video_id=VIDEO_ID, mode="full")["id"],
+        )
+    finally:
+        runner.close()
+
+    assert first["result"]["new_count"] == 2
+    assert first["result"]["export_count"] == 2
+    assert second["result"]["new_count"] == 1
+    assert second["result"]["updated_count"] == 1
+    assert second["result"]["unchanged_count"] == 1
+    assert second["result"]["context_count"] == 1
+    assert second["result"]["export_count"] == 3
+    delta_path = settings.data_home / second["result"]["file"]
+    delta = [
+        json.loads(line)
+        for line in delta_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert [record["comment_id"] for record in delta] == [
+        "comment-2",
+        "comment-1",
+        "comment-3",
+    ]
+
+    assert third["result"]["mode"] == "full"
+    assert third["result"]["export_count"] == 2
+    assert third["result"]["not_observed_count"] == 1
+    assert "未从本地索引删除" in third["message"]
+    canonical_path = (
+        settings.works_dir
+        / "videos"
+        / "douyin"
+        / VIDEO_ID
+        / "comments"
+        / "comments.jsonl"
+    )
+    canonical = [
+        json.loads(line)
+        for line in canonical_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert [record["comment_id"] for record in canonical] == [
+        "comment-1",
+        "comment-2",
+        "comment-3",
+    ]
+    assert canonical[1]["like_count"] == 5
 
 
 def test_comment_count_job_records_delta_without_exporting_content(

@@ -115,7 +115,7 @@ th { color: #565e65; background: #f4f5f6; font-size: 12px; font-weight: 650; }
 tbody tr:last-child td { border-bottom: 0; }
 tbody tr:hover { background: #f8faf9; }
 .select-cell { width: 44px; text-align: center; }
-.action-cell { width: 276px; text-align: right; }
+.action-cell { width: 324px; text-align: right; }
 .video-actions { display: flex; justify-content: flex-end; gap: 7px; }
 .comment-count-button { width: 132px; white-space: nowrap; }
 .comment-export-button { width: 104px; white-space: nowrap; }

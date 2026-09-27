@@ -523,6 +523,21 @@ def create_local_app(
             "comments",
             redirect_path=_video_return_path(form),
             video_id=video_id,
+            mode="incremental",
+        )
+
+    @app.post("/videos/{video_id}/comments/full")
+    async def synchronize_all_comments(
+        request: Request, video_id: str
+    ) -> RedirectResponse:
+        form = await request.form()
+        validate_csrf(request, form)
+        return submit(
+            request,
+            "comments",
+            redirect_path=_video_return_path(form),
+            video_id=video_id,
+            mode="full",
         )
 
     @app.post("/videos/{video_id}/comment-count")
@@ -542,7 +557,15 @@ def create_local_app(
     async def export_comment_batch(request: Request) -> RedirectResponse:
         form = await request.form()
         validate_csrf(request, form)
-        video_ids = list(dict.fromkeys(str(value).strip() for value in form.getlist("video_id")))
+        mode = str(form.get("mode") or "incremental").strip()
+        if mode not in {"incremental", "full"}:
+            add_flash(request, "评论导出模式无效", "error")
+            return _redirect(_video_return_path(form))
+        video_ids = list(
+            dict.fromkeys(
+                str(value).strip() for value in form.getlist("video_id")
+            )
+        )
         video_ids = [value for value in video_ids if value]
         if not video_ids:
             add_flash(request, "请选择至少一个视频", "error")
@@ -551,12 +574,17 @@ def create_local_app(
         rejected = 0
         for video_id in video_ids:
             try:
-                runner.submit("comments", video_id=video_id)
+                runner.submit("comments", video_id=video_id, mode=mode)
                 accepted += 1
             except (ActiveCommentJobError, KeyError, ValueError, RuntimeError):
                 rejected += 1
         level = "warning" if rejected else "success"
-        add_flash(request, f"已启动 {accepted} 个评论导出任务，跳过 {rejected} 个", level)
+        action = "完整同步" if mode == "full" else "增量导出"
+        add_flash(
+            request,
+            f"已启动 {accepted} 个评论{action}任务，跳过 {rejected} 个",
+            level,
+        )
         return _redirect(_video_return_path(form))
 
     @app.get("/api/state")

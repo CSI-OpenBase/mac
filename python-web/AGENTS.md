@@ -39,6 +39,12 @@ persistence, backend APIs, and the local web UI used by the macOS host.
 - Drive manual comment export at the documented fastest-human cadence and stop
   as soon as strict completeness stabilizes. Performance changes must not
   weaken root/reply pagination, relationship, or aggregate-count validation.
+- Keep incremental comment delivery separate from collection completeness.
+  Every run retains a complete observed snapshot; incremental files contain
+  only new or materially changed records plus required relationship context
+  relative to the per-video canonical index. Ignore collection timestamps when
+  detecting changes, never delete an unseen historical comment automatically,
+  and never promote a blocked run to the canonical baseline.
 - Keep stored/database timestamps normalized to UTC, but render every
   user-visible timestamp and generate date-based archive/export directories in
   fixed Beijing time (`UTC+08:00`), independent of the host system timezone.

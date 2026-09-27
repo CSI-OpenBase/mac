@@ -657,12 +657,16 @@ def test_comment_route_only_creates_explicit_immediate_job(tmp_path: Path) -> No
         assert "首次获取" in home.text
         assert "尚未导出评论" in home.text
         assert ">获取最新评论</span>" in home.text
-        assert ">导出评论</span>" in home.text
+        assert ">导出新增</span>" in home.text
+        assert "完整重新同步评论" in home.text
         assert (
             'formaction="/videos/7680023068660346011/comment-count"' in home.text
         )
         assert (
             'formaction="/videos/7680023068660346011/comments"' in home.text
+        )
+        assert (
+            'formaction="/videos/7680023068660346011/comments/full"' in home.text
         )
         response = client.post(
             "/videos/7680023068660346011/comments",
@@ -673,8 +677,20 @@ def test_comment_route_only_creates_explicit_immediate_job(tmp_path: Path) -> No
         assert response.headers["location"] == (
             "/?page=2&page_size=50#video-archive"
         )
+        first_job = store.list_jobs(limit=1)[0]
+        store.update_job(first_job["id"], "succeeded")
+        response = client.post(
+            "/videos/7680023068660346011/comments/full",
+            data={"csrf_token": csrf(client), "page": "2", "page_size": "50"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
     assert runner.calls == [
-        ("comments", {"video_id": "7680023068660346011"})
+        (
+            "comments",
+            {"video_id": "7680023068660346011", "mode": "incremental"},
+        ),
+        ("comments", {"video_id": "7680023068660346011", "mode": "full"}),
     ]
 
 
@@ -725,5 +741,6 @@ def test_comment_batch_returns_to_the_current_video_page(tmp_path: Path) -> None
         "/?page=3&page_size=100#video-archive"
     )
     assert runner.calls == [
-        ("comments", {"video_id": video_id}) for video_id in video_ids
+        ("comments", {"video_id": video_id, "mode": "incremental"})
+        for video_id in video_ids
     ]

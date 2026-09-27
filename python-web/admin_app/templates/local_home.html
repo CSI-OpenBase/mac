@@ -126,7 +126,7 @@
           <button class="button button-secondary" type="submit" form="comment-batch" formaction="/groups/videos/add"><i data-lucide="folder-input" aria-hidden="true"></i><span>加入</span></button>
           {% endif %}
           {% if videos and selected_group and selected_group.source == 'manual' %}<button class="button button-secondary" type="submit" form="comment-batch" formaction="/groups/videos/remove"><i data-lucide="folder-output" aria-hidden="true"></i><span>移出分组</span></button>{% endif %}
-          {% if videos %}<button class="button button-secondary" type="submit" form="comment-batch"><i data-lucide="message-square-down" aria-hidden="true"></i><span>导出所选评论</span></button>{% endif %}
+          {% if videos %}<button class="button button-secondary" type="submit" form="comment-batch" name="mode" value="incremental"><i data-lucide="message-square-down" aria-hidden="true"></i><span>增量导出所选</span></button><button class="icon-button" type="submit" form="comment-batch" name="mode" value="full" title="完整同步所选评论"><i data-lucide="refresh-ccw" aria-hidden="true"></i><span class="sr-only">完整同步所选评论</span></button>{% endif %}
         </div>
       </div>
       <form method="post" action="/comments/batch" id="comment-batch">
@@ -146,7 +146,7 @@
                 <td><time datetime="{{ video.first_seen_at }}">{{ video.first_seen_at_display }}</time></td>
                 <td><time datetime="{{ video.last_seen_at }}">{{ video.last_seen_at_display }}</time></td>
                 <td><strong>{% if video.visible_comment_count is not none %}{{ "{:,}".format(video.visible_comment_count) }}{% else %}—{% endif %}</strong><span class="cell-note">{% if video.last_comment_count_at %}{% if video.comment_count_delta is none %}首次获取{% elif video.comment_count_delta > 0 %}较上次 +{{ "{:,}".format(video.comment_count_delta) }}{% elif video.comment_count_delta < 0 %}较上次 {{ "{:,}".format(video.comment_count_delta) }}{% else %}较上次无变化{% endif %} · {{ video.last_comment_count_at_display }}{% else %}尚未获取评论数{% endif %}</span><span class="cell-note">{% if video.last_comment_export_at %}上次导出 {{ "{:,}".format(video.comment_count|default(0)) }} 条 · {{ video.last_comment_export_at_display }}{% else %}尚未导出评论{% endif %}</span></td>
-                <td class="action-cell"><div class="video-actions"><button type="submit" class="button button-secondary comment-count-button" formmethod="post" formaction="/videos/{{ video.video_id }}/comment-count" title="仅更新评论数量，不导出评论内容"><i data-lucide="refresh-cw" aria-hidden="true"></i><span>获取最新评论</span></button><button type="submit" class="button button-secondary comment-export-button" formmethod="post" formaction="/videos/{{ video.video_id }}/comments"><i data-lucide="message-square-down" aria-hidden="true"></i><span>导出评论</span></button></div></td>
+                <td class="action-cell"><div class="video-actions"><button type="submit" class="button button-secondary comment-count-button" formmethod="post" formaction="/videos/{{ video.video_id }}/comment-count" title="仅更新评论数量，不导出评论内容"><i data-lucide="refresh-cw" aria-hidden="true"></i><span>获取最新评论</span></button><button type="submit" class="button button-secondary comment-export-button" formmethod="post" formaction="/videos/{{ video.video_id }}/comments" title="导出相对本地索引新增或发生变化的评论"><i data-lucide="message-square-down" aria-hidden="true"></i><span>导出新增</span></button><button type="submit" class="icon-button" formmethod="post" formaction="/videos/{{ video.video_id }}/comments/full" title="完整重新同步评论"><i data-lucide="refresh-ccw" aria-hidden="true"></i><span class="sr-only">完整重新同步评论</span></button></div></td>
               </tr>
               {% else %}
               <tr><td colspan="7" class="empty">暂无视频档案</td></tr>
@@ -167,7 +167,7 @@
           <thead><tr><th>编号</th><th>任务</th><th>视频</th><th>状态</th><th>开始时间（北京时间）</th><th>结果</th></tr></thead>
           <tbody>
             {% for job in jobs %}
-            <tr><td>#{{ job.id }}</td><td>{{ {'authorize':'账号授权','export':'数据导出','sync_videos':'主页同步','comment_count':'评论数更新','comments':'评论导出'}.get(job.kind, job.kind) }}</td><td><code>{{ job.video_id|default('—', true) }}</code></td><td><span class="job-status status-{{ job.status }}">{{ job.status }}</span></td><td>{{ job.started_at_display if job.started_at else job.created_at_display }}</td><td class="job-message">{{ job.message|default('等待执行', true) }}</td></tr>
+            <tr><td>#{{ job.id }}</td><td>{% if job.kind == 'comments' %}{{ '评论完整同步' if job.payload.mode|default('incremental') == 'full' else '评论增量导出' }}{% else %}{{ {'authorize':'账号授权','export':'数据导出','sync_videos':'主页同步','comment_count':'评论数更新'}.get(job.kind, job.kind) }}{% endif %}</td><td><code>{{ job.video_id|default('—', true) }}</code></td><td><span class="job-status status-{{ job.status }}">{{ job.status }}</span></td><td>{{ job.started_at_display if job.started_at else job.created_at_display }}</td><td class="job-message">{{ job.message|default('等待执行', true) }}</td></tr>
             {% else %}<tr><td colspan="6" class="empty">暂无任务记录</td></tr>{% endfor %}
           </tbody>
         </table>
