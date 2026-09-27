@@ -10,6 +10,8 @@ from admin_app.video_archive import (
     VideoArchiveError,
     VideoArchiveIdentityError,
     _declared_profile_work_count,
+    _comment_count_from_dom_values,
+    _comment_content_url,
     _launch_persistent_context,
     _merge_records,
     _profile_listing_complete,
@@ -17,6 +19,7 @@ from admin_app.video_archive import (
     archive_profile_videos,
     extract_videos_from_dom,
     extract_videos_from_response,
+    extract_video_comment_count,
     sync_profile_videos,
     validate_douyin_profile_url,
 )
@@ -25,6 +28,47 @@ from admin_app.video_archive import (
 PROFILE_URL = "https://www.douyin.com/user/MS4wLjABAAAA_test-creator"
 FIRST_SEEN = "2026-09-07T01:02:03Z"
 LAST_SEEN = "2026-09-08T04:05:06Z"
+
+
+def test_extract_video_comment_count_ignores_comment_content() -> None:
+    payload = {
+        "aweme_detail": {
+            "aweme_id": "7390123456789012345",
+            "desc": "视频",
+            "statistics": {"comment_count": 128, "digg_count": 900},
+        },
+        "comments": [
+            {"cid": "secret-comment", "text": "不应进入视频档案"}
+        ],
+    }
+
+    assert (
+        extract_video_comment_count(
+            payload, video_id="7390123456789012345"
+        )
+        == 128
+    )
+    assert extract_video_comment_count(payload, video_id="7390123456789012346") is None
+
+
+def test_comment_count_dom_fallback_accepts_labeled_and_zero_values() -> None:
+    assert _comment_count_from_dom_values([{"label": "评论 1.2万"}]) == 12_000
+    assert _comment_count_from_dom_values([{"text": "0"}]) == 0
+    assert _comment_count_from_dom_values([{"label": "点赞 300"}]) is None
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://www.douyin.com/aweme/v1/web/comment/list/", True),
+        ("https://www.douyin.com/aweme/v1/web/aweme/detail/", False),
+        ("https://evil.example/aweme/v1/web/comment/list/", False),
+    ],
+)
+def test_comment_count_refresh_blocks_comment_content_requests(
+    url: str, expected: bool
+) -> None:
+    assert _comment_content_url(url) is expected
 
 
 @pytest.mark.parametrize(

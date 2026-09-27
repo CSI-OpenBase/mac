@@ -17,7 +17,9 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping
 
 
-JOB_KINDS = frozenset({"authorize", "export", "sync_videos", "comments"})
+JOB_KINDS = frozenset(
+    {"authorize", "export", "sync_videos", "comment_count", "comments"}
+)
 JOB_STATUSES = frozenset(
     {"queued", "running", "succeeded", "partial", "blocked", "failed", "interrupted"}
 )
@@ -46,7 +48,7 @@ def _decode(value: str | None, default: Any) -> Any:
 
 
 class ActiveCommentJobError(ValueError):
-    """Raised when the operator double-submits one video's comment export."""
+    """Raised when one video already has an active comment-related job."""
 
 
 class JobStateConflictError(RuntimeError):
@@ -95,10 +97,6 @@ class LocalStore:
                 );
                 CREATE INDEX IF NOT EXISTS ix_archive_jobs_created
                     ON archive_jobs(created_at DESC, id DESC);
-                CREATE UNIQUE INDEX IF NOT EXISTS ux_active_video_comment_job
-                    ON archive_jobs(video_id)
-                    WHERE kind = 'comments'
-                      AND status IN ('queued', 'running');
                 CREATE TABLE IF NOT EXISTS archive_videos (
                     video_id TEXT PRIMARY KEY,
                     platform TEXT NOT NULL DEFAULT 'douyin',
@@ -110,6 +108,8 @@ class LocalStore:
                     last_seen_at TEXT NOT NULL,
                     last_comment_export_at TEXT,
                     visible_comment_count INTEGER,
+                    last_comment_count_at TEXT,
+                    comment_count_delta INTEGER,
                     comment_count INTEGER NOT NULL DEFAULT 0,
                     record_json TEXT NOT NULL,
                     updated_at TEXT NOT NULL
@@ -134,6 +134,29 @@ class LocalStore:
                     ADD COLUMN visible_comment_count INTEGER
                     """
                 )
+            if "last_comment_count_at" not in video_columns:
+                connection.execute(
+                    """
+                    ALTER TABLE archive_videos
+                    ADD COLUMN last_comment_count_at TEXT
+                    """
+                )
+            if "comment_count_delta" not in video_columns:
+                connection.execute(
+                    """
+                    ALTER TABLE archive_videos
+                    ADD COLUMN comment_count_delta INTEGER
+                    """
+                )
+            connection.execute("DROP INDEX IF EXISTS ux_active_video_comment_job")
+            connection.execute(
+                """
+                CREATE UNIQUE INDEX ux_active_video_comment_job
+                    ON archive_jobs(video_id)
+                    WHERE kind IN ('comments', 'comment_count')
+                      AND status IN ('queued', 'running')
+                """
+            )
 
     @contextmanager
     def exclusive_maintenance(self) -> Iterator[None]:
@@ -263,8 +286,8 @@ class LocalStore:
         if kind not in JOB_KINDS:
             raise ValueError(f"unsupported local job kind: {kind}")
         normalized_video_id = video_id.strip() if video_id else None
-        if kind == "comments" and not normalized_video_id:
-            raise ValueError("comments jobs require a video_id")
+        if kind in {"comments", "comment_count"} and not normalized_video_id:
+            raise ValueError("comment jobs require a video_id")
         if normalized_video_id and not VIDEO_ID_RE.fullmatch(normalized_video_id):
             raise ValueError("video_id must contain 8-32 digits")
         now = utc_now()
@@ -280,9 +303,9 @@ class LocalStore:
                 )
                 job_id = int(cursor.lastrowid)
         except sqlite3.IntegrityError as exc:
-            if kind == "comments":
+            if kind in {"comments", "comment_count"}:
                 raise ActiveCommentJobError(
-                    "该视频已有等待中或正在运行的评论导出任务"
+                    "该视频已有等待中或正在运行的评论任务"
                 ) from exc
             raise
         job = self.get_job(job_id)
@@ -402,8 +425,9 @@ class LocalStore:
                     INSERT INTO archive_videos(
                         video_id, platform, title, video_url, cover_path,
                         manifest_path, first_seen_at, last_seen_at,
-                        visible_comment_count, record_json, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        visible_comment_count, last_comment_count_at,
+                        comment_count_delta, record_json, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
                     ON CONFLICT(video_id) DO UPDATE SET
                         title = excluded.title,
                         video_url = excluded.video_url,
@@ -411,6 +435,16 @@ class LocalStore:
                         manifest_path = excluded.manifest_path,
                         first_seen_at = MIN(archive_videos.first_seen_at, excluded.first_seen_at),
                         last_seen_at = MAX(archive_videos.last_seen_at, excluded.last_seen_at),
+                        comment_count_delta = CASE
+                            WHEN ? AND archive_videos.visible_comment_count IS NOT NULL
+                                THEN excluded.visible_comment_count - archive_videos.visible_comment_count
+                            WHEN ? THEN NULL
+                            ELSE archive_videos.comment_count_delta
+                        END,
+                        last_comment_count_at = CASE
+                            WHEN ? THEN excluded.last_comment_count_at
+                            ELSE archive_videos.last_comment_count_at
+                        END,
                         visible_comment_count = CASE
                             WHEN ? THEN excluded.visible_comment_count
                             ELSE archive_videos.visible_comment_count
@@ -428,8 +462,12 @@ class LocalStore:
                         first_seen_at,
                         last_seen_at,
                         visible_comment_count,
+                        last_seen_at if visible_comment_count is not None else None,
                         _json(record),
                         now,
+                        visible_comment_count is not None,
+                        visible_comment_count is not None,
+                        visible_comment_count is not None,
                         visible_comment_count is not None,
                     ),
                 )
@@ -505,3 +543,45 @@ class LocalStore:
             ).rowcount
         if changed != 1:
             raise KeyError(f"video {video_id} does not exist")
+
+    def record_visible_comment_count(
+        self, video_id: str, *, count: int, checked_at: str | None = None
+    ) -> dict[str, Any]:
+        if isinstance(count, bool):
+            raise ValueError("comment count must be a non-negative integer")
+        try:
+            normalized_count = int(count)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("comment count must be a non-negative integer") from exc
+        if normalized_count < 0:
+            raise ValueError("comment count must be a non-negative integer")
+        observed_at = checked_at or utc_now()
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT visible_comment_count FROM archive_videos WHERE video_id = ?",
+                (video_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"video {video_id} does not exist")
+            previous_count = row["visible_comment_count"]
+            delta = (
+                normalized_count - int(previous_count)
+                if previous_count is not None
+                else None
+            )
+            connection.execute(
+                """
+                UPDATE archive_videos
+                   SET visible_comment_count = ?, comment_count_delta = ?,
+                       last_comment_count_at = ?, updated_at = ?
+                 WHERE video_id = ?
+                """,
+                (normalized_count, delta, observed_at, utc_now(), video_id),
+            )
+        return {
+            "video_id": video_id,
+            "previous_count": previous_count,
+            "current_count": normalized_count,
+            "delta": delta,
+            "checked_at": observed_at,
+        }

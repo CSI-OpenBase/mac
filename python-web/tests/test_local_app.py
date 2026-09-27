@@ -498,8 +498,13 @@ def test_comment_route_only_creates_explicit_immediate_job(tmp_path: Path) -> No
         home = client.get("/")
         assert home.status_code == 200
         assert "12,876" in home.text
+        assert "首次获取" in home.text
         assert "尚未导出评论" in home.text
+        assert ">获取最新评论</span>" in home.text
         assert ">导出评论</span>" in home.text
+        assert (
+            'formaction="/videos/7680023068660346011/comment-count"' in home.text
+        )
         assert (
             'formaction="/videos/7680023068660346011/comments"' in home.text
         )
@@ -515,6 +520,28 @@ def test_comment_route_only_creates_explicit_immediate_job(tmp_path: Path) -> No
     assert runner.calls == [
         ("comments", {"video_id": "7680023068660346011"})
     ]
+
+
+def test_comment_count_route_is_distinct_from_comment_export(tmp_path: Path) -> None:
+    local_settings = settings(tmp_path)
+    store = LocalStore(local_settings.database_path)
+    video_id = archive_videos(store, 1)[0]
+    runner = FakeRunner(store)
+
+    with TestClient(
+        create_local_app(local_settings, store=store, runner=runner)
+    ) as client:
+        response = client.post(
+            f"/videos/{video_id}/comment-count",
+            data={"csrf_token": csrf(client), "page": "3", "page_size": "100"},
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == (
+        "/?page=3&page_size=100#video-archive"
+    )
+    assert runner.calls == [("comment_count", {"video_id": video_id})]
 
 
 def test_comment_batch_returns_to_the_current_video_page(tmp_path: Path) -> None:

@@ -105,25 +105,34 @@ def test_video_index_records_visible_comments_without_claiming_an_export(
     video = store.get_video("7680023068660346011")
     assert video is not None
     assert video["visible_comment_count"] == 34
+    assert video["last_comment_count_at"] == "2026-09-07T10:00:00Z"
+    assert video["comment_count_delta"] is None
     assert video["comment_count"] == 0
     assert video["last_comment_export_at"] is None
 
     missing_metric = video_record()
     missing_metric["last_seen_at"] = "2026-09-08T10:00:00Z"
     store.upsert_videos([missing_metric])
-    assert store.get_video("7680023068660346011")["visible_comment_count"] == 34
+    video = store.get_video("7680023068660346011")
+    assert video["visible_comment_count"] == 34
+    assert video["last_comment_count_at"] == "2026-09-07T10:00:00Z"
 
     refreshed = video_record()
     refreshed["visible_comment_count"] = 21
     refreshed["last_seen_at"] = "2026-09-09T10:00:00Z"
     store.upsert_videos([refreshed])
-    assert store.get_video("7680023068660346011")["visible_comment_count"] == 21
+    video = store.get_video("7680023068660346011")
+    assert video["visible_comment_count"] == 21
+    assert video["comment_count_delta"] == -13
+    assert video["last_comment_count_at"] == "2026-09-09T10:00:00Z"
 
     no_comments = video_record()
     no_comments["visible_comment_count"] = 0
     no_comments["last_seen_at"] = "2026-09-10T10:00:00Z"
     store.upsert_videos([no_comments])
-    assert store.get_video("7680023068660346011")["visible_comment_count"] == 0
+    video = store.get_video("7680023068660346011")
+    assert video["visible_comment_count"] == 0
+    assert video["comment_count_delta"] == -21
 
 
 def test_existing_video_index_gains_visible_comment_column(tmp_path: Path) -> None:
@@ -176,9 +185,13 @@ def test_existing_video_index_gains_visible_comment_column(tmp_path: Path) -> No
             for row in connection.execute("PRAGMA table_info(archive_videos)")
         }
     assert "visible_comment_count" in columns
+    assert "last_comment_count_at" in columns
+    assert "comment_count_delta" in columns
     video = store.get_video("7680023068660346011")
     assert video is not None
     assert video["visible_comment_count"] is None
+    assert video["last_comment_count_at"] is None
+    assert video["comment_count_delta"] is None
     assert video["comment_count"] == 27
     assert video["last_comment_export_at"] == "2026-09-07T12:00:00Z"
 
@@ -192,13 +205,40 @@ def test_comment_job_is_immediate_and_deduplicated(tmp_path: Path) -> None:
 
     with pytest.raises(
         ActiveCommentJobError,
-        match="该视频已有等待中或正在运行的评论导出任务",
+        match="该视频已有等待中或正在运行的评论任务",
     ):
-        store.create_job("comments", video_id="7680023068660346011")
+        store.create_job("comment_count", video_id="7680023068660346011")
 
     store.update_job(first["id"], "succeeded", result={"count": 3})
     second = store.create_job("comments", video_id="7680023068660346011")
     assert second["id"] > first["id"]
+
+
+def test_visible_comment_refresh_records_only_the_count_change(tmp_path: Path) -> None:
+    store = LocalStore(tmp_path / "openbase.sqlite3")
+    record = video_record()
+    record["visible_comment_count"] = 41
+    store.upsert_videos([record])
+
+    result = store.record_visible_comment_count(
+        "7680023068660346011",
+        count=47,
+        checked_at="2026-09-07T12:00:00Z",
+    )
+
+    assert result == {
+        "video_id": "7680023068660346011",
+        "previous_count": 41,
+        "current_count": 47,
+        "delta": 6,
+        "checked_at": "2026-09-07T12:00:00Z",
+    }
+    video = store.get_video("7680023068660346011")
+    assert video["visible_comment_count"] == 47
+    assert video["comment_count_delta"] == 6
+    assert video["last_comment_count_at"] == "2026-09-07T12:00:00Z"
+    assert video["comment_count"] == 0
+    assert video["last_comment_export_at"] is None
 
 
 @pytest.mark.parametrize("video_id", ["..", "../outside", "1234", "12345678/9"])

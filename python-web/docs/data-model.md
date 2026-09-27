@@ -18,7 +18,9 @@ CSI OpenBase 使用工作区外壳和四类不可变业务快照。JSON Schema �
 
 `works/work-snapshots.jsonl` 保存作品在某个观测时间的播放、互动、留存、主页访问和涨粉数据。系统识别官方作品 ID、视频 ID、`item_id` 与 `aweme_id` 等常见表头；仅在导出文件缺少稳定 ID 时，才使用标题与发布时间生成合成 ID。同一作品多次导入会保留时间序列。
 
-主页同步还会在 `works/discovery/` 保存发现批次，并在 `works/videos/douyin/<video_id>/metadata/` 保存逐视频观测记录。记录中的 `visible_metrics.comment_count` 是同步时主页或平台响应可见的评论总数；它与用户手动导出的匿名评论记录数分开维护。
+主页同步还会在 `works/discovery/` 保存发现批次，并在 `works/videos/douyin/<video_id>/metadata/` 保存逐视频观测记录。记录中的 `visible_metrics.comment_count` 是同步时主页或平台响应可见的评论总数。首页“获取最新评论”也只读取单个视频的平台评论总数，并在 SQLite 中保存最后获取时间以及与上一次可见总数的差值；该操作不请求评论列表、不创建评论目录，也不写入评论正文。
+
+平台可见总数与用户手动导出的匿名评论记录数分开维护。`visible_comment_count`、`last_comment_count_at` 和 `comment_count_delta` 描述最后一次平台计数观测；`comment_count` 和 `last_comment_export_at` 只描述最近一次“导出评论”的结果。平台审核或删除可能使变化量为负数。
 
 ## 评论
 
@@ -48,7 +50,7 @@ CSI OpenBase 使用工作区外壳和四类不可变业务快照。JSON Schema �
 
 ## 本地数据清理
 
-本地页面提供三个白名单清理范围。“平台导出的原始数据”删除 `exports/` 及对应导出任务记录；“用户评论数据”删除逐视频 `comments/` 目录、评论任务记录和已导出数量，但保留主页同步所得的 `visible_metrics.comment_count`；“全部数据”删除 `exports/`、`works/` 以及 SQLite 中的账号、视频和任务索引。
+本地页面提供三个白名单清理范围。“平台导出的原始数据”删除 `exports/` 及对应导出任务记录；“用户评论数据”删除逐视频 `comments/` 目录、评论导出任务记录和已导出数量，但保留视频档案、评论数刷新任务以及最后一次平台评论总数和变化量；“全部数据”删除 `exports/`、`works/` 以及 SQLite 中的账号、视频和任务索引。
 
 Web 清理功能始终保留用户选择的工作目录、工作目录根部的其他文件、运行日志及浏览器登录授权；`exports/` 与 `works/` 是程序托管目录，清空相应范围时会删除其中全部内容。清空全部数据后，用户需要重新校验创作者账号。存在等待中或运行中的任务时，清理请求会被拒绝；程序也会拒绝清理包含链接、目录联接点、挂载点或与浏览器授权目录重叠的数据路径。
 

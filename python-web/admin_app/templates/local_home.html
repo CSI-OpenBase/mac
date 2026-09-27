@@ -96,8 +96,8 @@
                 <td><a href="{{ video.video_url }}" target="_blank" rel="noopener noreferrer" class="video-title">{{ video.title }}</a><code>{{ video.video_id }}</code></td>
                 <td><time>{{ video.first_seen_at }}</time></td>
                 <td><time>{{ video.last_seen_at }}</time></td>
-                <td><strong>{% if video.visible_comment_count is not none %}{{ "{:,}".format(video.visible_comment_count) }}{% else %}—{% endif %}</strong><span class="cell-note">{% if video.last_comment_export_at %}上次导出 {{ "{:,}".format(video.comment_count|default(0)) }} 条 · {{ video.last_comment_export_at }}{% else %}尚未导出评论{% endif %}</span></td>
-                <td class="action-cell"><button type="submit" class="button button-secondary comment-export-button" formmethod="post" formaction="/videos/{{ video.video_id }}/comments"><i data-lucide="message-square-down" aria-hidden="true"></i><span>导出评论</span></button></td>
+                <td><strong>{% if video.visible_comment_count is not none %}{{ "{:,}".format(video.visible_comment_count) }}{% else %}—{% endif %}</strong><span class="cell-note">{% if video.last_comment_count_at %}{% if video.comment_count_delta is none %}首次获取{% elif video.comment_count_delta > 0 %}较上次 +{{ "{:,}".format(video.comment_count_delta) }}{% elif video.comment_count_delta < 0 %}较上次 {{ "{:,}".format(video.comment_count_delta) }}{% else %}较上次无变化{% endif %} · {{ video.last_comment_count_at }}{% else %}尚未获取评论数{% endif %}</span><span class="cell-note">{% if video.last_comment_export_at %}上次导出 {{ "{:,}".format(video.comment_count|default(0)) }} 条 · {{ video.last_comment_export_at }}{% else %}尚未导出评论{% endif %}</span></td>
+                <td class="action-cell"><div class="video-actions"><button type="submit" class="button button-secondary comment-count-button" formmethod="post" formaction="/videos/{{ video.video_id }}/comment-count" title="仅更新评论数量，不导出评论内容"><i data-lucide="refresh-cw" aria-hidden="true"></i><span>获取最新评论</span></button><button type="submit" class="button button-secondary comment-export-button" formmethod="post" formaction="/videos/{{ video.video_id }}/comments"><i data-lucide="message-square-down" aria-hidden="true"></i><span>导出评论</span></button></div></td>
               </tr>
               {% else %}
               <tr><td colspan="6" class="empty">暂无视频档案</td></tr>
@@ -118,7 +118,7 @@
           <thead><tr><th>编号</th><th>任务</th><th>视频</th><th>状态</th><th>开始时间</th><th>结果</th></tr></thead>
           <tbody>
             {% for job in jobs %}
-            <tr><td>#{{ job.id }}</td><td>{{ {'authorize':'账号授权','export':'数据导出','sync_videos':'主页同步','comments':'评论导出'}.get(job.kind, job.kind) }}</td><td><code>{{ job.video_id|default('—', true) }}</code></td><td><span class="job-status status-{{ job.status }}">{{ job.status }}</span></td><td>{{ job.started_at|default(job.created_at, true) }}</td><td class="job-message">{{ job.message|default('等待执行', true) }}</td></tr>
+            <tr><td>#{{ job.id }}</td><td>{{ {'authorize':'账号授权','export':'数据导出','sync_videos':'主页同步','comment_count':'评论数更新','comments':'评论导出'}.get(job.kind, job.kind) }}</td><td><code>{{ job.video_id|default('—', true) }}</code></td><td><span class="job-status status-{{ job.status }}">{{ job.status }}</span></td><td>{{ job.started_at|default(job.created_at, true) }}</td><td class="job-message">{{ job.message|default('等待执行', true) }}</td></tr>
             {% else %}<tr><td colspan="6" class="empty">暂无任务记录</td></tr>{% endfor %}
           </tbody>
         </table>

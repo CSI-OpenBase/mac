@@ -254,6 +254,58 @@ def test_comment_export_is_timestamped_and_records_user_trigger(tmp_path: Path) 
     assert store.get_video(VIDEO_ID)["comment_count"] == 1
 
 
+def test_comment_count_job_records_delta_without_exporting_content(
+    tmp_path: Path,
+) -> None:
+    settings = make_settings(tmp_path)
+    store = LocalStore(settings.database_path)
+    store.upsert_videos(
+        [
+            {
+                "video_id": VIDEO_ID,
+                "title": "测试视频",
+                "video_url": f"https://www.douyin.com/video/{VIDEO_ID}",
+                "manifest_path": f"works/videos/douyin/{VIDEO_ID}/manifest.json",
+                "first_seen_at": "2026-09-07T00:00:00Z",
+                "last_seen_at": "2026-09-07T00:00:00Z",
+                "visible_comment_count": 34,
+            }
+        ]
+    )
+    calls: list[dict[str, Any]] = []
+
+    def fake_count(**kwargs: Any) -> int:
+        calls.append(kwargs)
+        return 39
+
+    runner = LocalJobRunner(store, settings, comment_counter=fake_count)
+    try:
+        job = runner.submit("comment_count", video_id=VIDEO_ID)
+        finished = wait_for_job(store, job["id"])
+    finally:
+        runner.close()
+
+    assert finished["status"] == "succeeded"
+    assert finished["payload"]["trigger"] == "user"
+    assert finished["message"] == "评论数 39，较上次 +5"
+    assert finished["result"]["previous_count"] == 34
+    assert finished["result"]["current_count"] == 39
+    assert finished["result"]["delta"] == 5
+    assert finished["result"]["content_exported"] is False
+    assert calls == [
+        {
+            "video_id": VIDEO_ID,
+            "video_url": f"https://www.douyin.com/video/{VIDEO_ID}",
+            "browser_profile_dir": settings.browser_profile_dir,
+            "timeout_seconds": 10,
+        }
+    ]
+    video = store.get_video(VIDEO_ID)
+    assert video["visible_comment_count"] == 39
+    assert video["comment_count"] == 0
+    assert not (settings.works_dir / "videos" / "douyin" / VIDEO_ID / "comments").exists()
+
+
 def test_blocked_comment_retry_does_not_replace_last_success(tmp_path: Path) -> None:
     settings = make_settings(tmp_path)
     store = LocalStore(settings.database_path)

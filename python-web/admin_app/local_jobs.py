@@ -32,6 +32,7 @@ from .video_archive import (
     VIDEO_ID_RE,
     VideoArchiveIdentityError,
     VideoArchiveResult,
+    fetch_video_comment_count,
     sync_profile_videos,
 )
 
@@ -104,6 +105,7 @@ class LocalJobRunner:
         authorize: TaskFunction = authorize_creator,
         exporter: TaskFunction = export_creator_data,
         video_sync: TaskFunction = sync_profile_videos,
+        comment_counter: TaskFunction = fetch_video_comment_count,
         comment_collector: TaskFunction = collect_video,
     ) -> None:
         self.store = store
@@ -111,6 +113,7 @@ class LocalJobRunner:
         self.authorize = authorize
         self.exporter = exporter
         self.video_sync = video_sync
+        self.comment_counter = comment_counter
         self.comment_collector = comment_collector
         self._queue: queue.Queue[int | None] = queue.Queue()
         self._thread: threading.Thread | None = None
@@ -155,7 +158,7 @@ class LocalJobRunner:
             if self._closed.is_set():
                 raise RuntimeError("the local job runner is closed")
             video_id = str(payload.get("video_id") or "").strip() or None
-            if kind == "comments":
+            if kind in {"comments", "comment_count"}:
                 if not video_id or self.store.get_video(video_id) is None:
                     raise KeyError("video does not exist in the local archive")
                 payload = {**payload, "trigger": "user"}
@@ -227,6 +230,8 @@ class LocalJobRunner:
             return self._run_export()
         if kind == "sync_videos":
             return self._run_video_sync(payload)
+        if kind == "comment_count":
+            return self._run_comment_count(str(job.get("video_id") or ""))
         if kind == "comments":
             return self._run_comments(str(job.get("video_id") or ""))
         raise ValueError(f"unsupported local job kind: {kind}")
@@ -446,6 +451,27 @@ class LocalJobRunner:
             else "succeeded"
         )
         return status, summary, meta
+
+    def _run_comment_count(
+        self, video_id: str
+    ) -> tuple[str, str, dict[str, Any]]:
+        if not VIDEO_ID_RE.fullmatch(video_id):
+            raise ValueError("video_id must contain 8-32 digits")
+        video = self.store.get_video(video_id)
+        if video is None:
+            raise KeyError("video does not exist in the local archive")
+        count = self.comment_counter(
+            video_id=video_id,
+            video_url=str(video["video_url"]),
+            browser_profile_dir=self.settings.browser_profile_dir,
+            timeout_seconds=max(10, self.settings.browser_capture_seconds),
+        )
+        self._raise_if_force_interrupted()
+        result = self.store.record_visible_comment_count(video_id, count=count)
+        delta = result["delta"]
+        change = "首次获取" if delta is None else f"较上次 {delta:+,}"
+        message = f"评论数 {result['current_count']:,}，{change}"
+        return "succeeded", message, {**result, "content_exported": False}
 
     def _run_comments(self, video_id: str) -> tuple[str, str, dict[str, Any]]:
         if not VIDEO_ID_RE.fullmatch(video_id):

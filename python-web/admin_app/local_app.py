@@ -323,6 +323,19 @@ def create_local_app(
             video_id=video_id,
         )
 
+    @app.post("/videos/{video_id}/comment-count")
+    async def refresh_comment_count(
+        request: Request, video_id: str
+    ) -> RedirectResponse:
+        form = await request.form()
+        validate_csrf(request, form)
+        return submit(
+            request,
+            "comment_count",
+            redirect_path=_video_return_path(form),
+            video_id=video_id,
+        )
+
     @app.post("/comments/batch")
     async def export_comment_batch(request: Request) -> RedirectResponse:
         form = await request.form()

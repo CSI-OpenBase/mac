@@ -12,6 +12,7 @@ import math
 import os
 import re
 import tempfile
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -492,6 +493,20 @@ def extract_videos_from_response(
         else:
             stack.extend((child, depth + 1) for child in reversed(value))
     return _merge_records(records)
+
+
+def extract_video_comment_count(payload: Any, *, video_id: str) -> int | None:
+    """Return one video's visible comment total without materializing comments."""
+
+    if not VIDEO_ID_RE.fullmatch(video_id):
+        raise VideoArchiveError("video_id must contain 8-32 digits")
+    for record in extract_videos_from_response(payload):
+        if record["video_id"] != video_id:
+            continue
+        metrics = record.get("visible_metrics")
+        if isinstance(metrics, Mapping) and "comment_count" in metrics:
+            return int(metrics["comment_count"])
+    return None
 
 
 def extract_videos_from_dom(
@@ -992,6 +1007,138 @@ def _relevant_response_url(value: str) -> bool:
     return _douyin_host(parsed.hostname) and "aweme" in path and any(
         token in path for token in ("post", "detail", "profile")
     )
+
+
+def _comment_content_url(value: str) -> bool:
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return False
+    return _douyin_host(parsed.hostname) and "comment" in parsed.path.casefold()
+
+
+_VIDEO_COMMENT_COUNT_SELECTOR = ", ".join(
+    (
+        '[data-e2e="comment-count"]',
+        '[data-e2e*="comment-count"]',
+        '[aria-label*="评论"]',
+    )
+)
+_VIDEO_COMMENT_COUNT_PROBE = r"""
+(nodes) => nodes.map((node) => ({
+  text: (node.textContent || '').replace(/\s+/g, ' ').trim(),
+  label: (node.getAttribute('aria-label') || '').trim(),
+  title: (node.getAttribute('title') || '').trim()
+}))
+"""
+
+
+def _comment_count_from_dom_values(values: Any) -> int | None:
+    if not isinstance(values, list):
+        return None
+    labeled: list[str] = []
+    plain: list[str] = []
+    for value in values[:100]:
+        if not isinstance(value, Mapping):
+            continue
+        for key in ("label", "title", "text"):
+            text = _clean_text(value.get(key), limit=200)
+            if not text:
+                continue
+            if "评论" in text:
+                labeled.append(text)
+            elif re.fullmatch(rf"\s*{_METRIC_VALUE_PATTERN}\s*", text):
+                plain.append(text)
+    for text in (*labeled, *plain):
+        metrics = _metrics({"metric_text": text})
+        if "comment_count" in metrics:
+            return metrics["comment_count"]
+        normalized = _count(text)
+        if normalized is not None:
+            return normalized
+    return None
+
+
+def fetch_video_comment_count(
+    *,
+    video_id: str,
+    video_url: str,
+    browser_profile_dir: Path,
+    timeout_seconds: int = 20,
+) -> int:
+    """Read only the platform's visible comment total for one archived video."""
+
+    if not VIDEO_ID_RE.fullmatch(video_id):
+        raise VideoArchiveError("video_id must contain 8-32 digits")
+    if _video_id_from_url(video_url) != video_id:
+        raise VideoArchiveError("video_url does not match video_id")
+    timeout = min(max(int(timeout_seconds), 5), 120)
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as exc:  # pragma: no cover - installation failure
+        raise VideoArchiveError("Playwright and Chromium are required") from exc
+
+    profile = browser_profile_dir.expanduser().resolve()
+    profile.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        profile.chmod(0o700)
+    except OSError:
+        pass
+
+    observed_counts: list[int] = []
+    with sync_playwright() as playwright:
+        context = _launch_persistent_context(playwright, profile)
+        try:
+            page = context.pages[0] if context.pages else context.new_page()
+
+            def block_comment_content(route: Any, request: Any) -> None:
+                if _comment_content_url(str(request.url)):
+                    route.abort()
+                else:
+                    route.continue_()
+
+            page.route("**/*", block_comment_content)
+
+            def handle_response(response: Any) -> None:
+                if not _relevant_response_url(str(response.url)):
+                    return
+                try:
+                    count = extract_video_comment_count(
+                        response.json(), video_id=video_id
+                    )
+                except Exception:
+                    return
+                if count is not None:
+                    observed_counts.append(count)
+
+            page.on("response", handle_response)
+            page.goto(
+                _canonical_video_url(video_id),
+                wait_until="domcontentloaded",
+                timeout=45_000,
+            )
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                if observed_counts:
+                    return observed_counts[-1]
+                current_url = str(getattr(page, "url", "")).casefold()
+                if any(
+                    token in current_url for token in ("passport", "captcha", "verify")
+                ):
+                    raise VideoArchiveError("需要在打开的浏览器中完成抖音登录或验证")
+                try:
+                    values = page.locator(
+                        _VIDEO_COMMENT_COUNT_SELECTOR
+                    ).evaluate_all(_VIDEO_COMMENT_COUNT_PROBE)
+                    count = _comment_count_from_dom_values(values)
+                    if count is not None:
+                        return count
+                except Exception:
+                    pass
+                page.wait_for_timeout(500)
+        finally:
+            context.close()
+    raise VideoArchiveError("未能读取该视频的最新评论数，请稍后重试")
 
 
 def _capture_with_playwright(

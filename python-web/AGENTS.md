@@ -31,10 +31,11 @@ persistence, backend APIs, and the local web UI used by the macOS host.
   `logs/`, the SQLite file and schema, and the browser authorization profile
   unless a future user-facing contract explicitly says otherwise.
 - Keep homepage-visible comments and exported comments as separate measures.
-  `visible_comment_count` records the platform value observed during video
-  synchronization; `comment_count` and `last_comment_export_at` describe the
-  user's latest manual comment export. Do not substitute or reset the visible
-  count when comments are exported or cleared.
+  `visible_comment_count`, `last_comment_count_at`, and `comment_count_delta`
+  describe the latest count-only platform observation, whether it came from
+  profile synchronization or the explicit refresh action. `comment_count` and
+  `last_comment_export_at` describe the user's latest manual content export.
+  Count-only refreshes must never request, persist, or clear comment content.
 - `docs/data-model.md` is the detailed source for local archive and cleanup
   semantics. Update it together with any change to these data boundaries.
 

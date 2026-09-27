@@ -94,7 +94,9 @@ th { color: #565e65; background: #f4f5f6; font-size: 12px; font-weight: 650; }
 tbody tr:last-child td { border-bottom: 0; }
 tbody tr:hover { background: #f8faf9; }
 .select-cell { width: 44px; text-align: center; }
-.action-cell { width: 128px; text-align: right; }
+.action-cell { width: 276px; text-align: right; }
+.video-actions { display: flex; justify-content: flex-end; gap: 7px; }
+.comment-count-button { width: 132px; white-space: nowrap; }
 .comment-export-button { width: 104px; white-space: nowrap; }
 .video-title { display: block; max-width: 100%; color: var(--ink); font-weight: 600; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .video-title:hover { color: var(--primary); text-decoration: underline; }
@@ -175,7 +177,7 @@ time { color: #4c555c; font-size: 12px; }
   .dialog-header, .dialog-body, .dialog-actions { padding-inline: 18px; }
   .dialog-actions { flex-direction: column-reverse; }
   .dialog-actions .button { width: 100%; }
-  table { min-width: 880px; }
+  table { min-width: 1040px; }
   .pagination { justify-content: space-between; }
   .page-numbers { display: none; }
   .page-position { display: inline; }
