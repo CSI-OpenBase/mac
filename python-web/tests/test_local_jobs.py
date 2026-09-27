@@ -10,7 +10,11 @@ from typing import Any
 from admin_app.collector import CollectionResult
 from admin_app.douyin_exports import ExportFileResult, ExportRunResult
 from admin_app.local_browser import CreatorIdentity
-from admin_app.local_config import LocalSettings
+from admin_app.local_config import (
+    COMMENT_EXPORT_DIRECTORY_KEY,
+    LOCAL_PREFERENCES_META_KEY,
+    LocalSettings,
+)
 from admin_app.local_jobs import LocalJobRunner
 from admin_app.local_store import LocalStore
 from admin_app.video_archive import archive_profile_videos
@@ -160,6 +164,10 @@ def test_video_sync_indexes_idempotent_file_archive(tmp_path: Path) -> None:
             "title": "测试视频",
             "url": f"https://www.douyin.com/video/{VIDEO_ID}",
             "view_count": 100 + calls,
+            "sources": ["response"],
+            "platform_groups": [
+                {"id": "7348687990509553679", "name": "测试栏目"}
+            ],
         }
         if calls == 1:
             record["comment_count"] = 34
@@ -191,11 +199,19 @@ def test_video_sync_indexes_idempotent_file_archive(tmp_path: Path) -> None:
     assert videos[0]["last_seen_at"] == "2026-09-08T00:00:00Z"
     assert videos[0]["visible_comment_count"] == 34
     assert videos[0]["comment_count"] == 0
+    assert [(group["name"], group["source"]) for group in videos[0]["groups"]] == [
+        ("测试栏目", "platform")
+    ]
 
 
 def test_comment_export_is_timestamped_and_records_user_trigger(tmp_path: Path) -> None:
     settings = make_settings(tmp_path)
     store = LocalStore(settings.database_path)
+    external_root = tmp_path / "comment-exports"
+    store.set_meta(
+        LOCAL_PREFERENCES_META_KEY,
+        {COMMENT_EXPORT_DIRECTORY_KEY: str(external_root)},
+    )
     archive_profile_videos(
         profile_url="https://www.douyin.com/user/self",
         works_dir=settings.works_dir,
@@ -251,6 +267,13 @@ def test_comment_export_is_timestamped_and_records_user_trigger(tmp_path: Path) 
     assert finished["payload"]["trigger"] == "user"
     assert finished["result"]["file"].endswith("comments.jsonl")
     assert "comments/20" in finished["result"]["directory"]
+    external_file = Path(finished["result"]["export_file"])
+    assert external_file.is_file()
+    assert external_file.is_relative_to(external_root / VIDEO_ID)
+    assert json.loads(external_file.read_text(encoding="utf-8"))["comment_id"] == (
+        "comment-1"
+    )
+    assert "已导出到" in finished["message"]
     assert store.get_video(VIDEO_ID)["comment_count"] == 1
 
 

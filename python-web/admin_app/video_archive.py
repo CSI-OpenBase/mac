@@ -82,6 +82,41 @@ _METRIC_LABELS = {
 _METRIC_VALUE_PATTERN = (
     r"[0-9]+(?:[,，\s][0-9]{3})*(?:\.[0-9]+)?\s*(?:万|亿|[wW])?"
 )
+_PLATFORM_GROUP_CONTAINERS = (
+    "mix_info",
+    "mixInfo",
+    "series_info",
+    "seriesInfo",
+    "collection_info",
+    "collectionInfo",
+)
+_PLATFORM_GROUP_LISTS = (
+    "mix_infos",
+    "mixInfos",
+    "series_infos",
+    "seriesInfos",
+    "collection_infos",
+    "collectionInfos",
+)
+_PLATFORM_GROUP_ID_KEYS = (
+    "mix_id",
+    "mixId",
+    "series_id",
+    "seriesId",
+    "collection_id",
+    "collectionId",
+    "id",
+)
+_PLATFORM_GROUP_NAME_KEYS = (
+    "mix_name",
+    "mixName",
+    "series_name",
+    "seriesName",
+    "collection_name",
+    "collectionName",
+    "name",
+    "title",
+)
 
 
 class VideoArchiveError(ValueError):
@@ -346,6 +381,49 @@ def _metrics(raw: Mapping[str, Any]) -> dict[str, int]:
     return result
 
 
+def _platform_groups(raw: Mapping[str, Any]) -> list[dict[str, str]]:
+    candidates: list[Mapping[str, Any]] = []
+    supplied = raw.get("platform_groups")
+    if isinstance(supplied, (list, tuple)):
+        candidates.extend(item for item in supplied if isinstance(item, Mapping))
+    for key in _PLATFORM_GROUP_CONTAINERS:
+        value = raw.get(key)
+        if isinstance(value, Mapping):
+            candidates.append(value)
+    for key in _PLATFORM_GROUP_LISTS:
+        value = raw.get(key)
+        if isinstance(value, (list, tuple)):
+            candidates.extend(item for item in value if isinstance(item, Mapping))
+    if any(
+        raw.get(key) not in (None, "")
+        for key in _PLATFORM_GROUP_ID_KEYS
+        if key != "id"
+    ):
+        candidates.append(raw)
+
+    groups: dict[str, dict[str, str]] = {}
+    for candidate in candidates:
+        group_id = next(
+            (
+                _clean_text(candidate.get(key), limit=128)
+                for key in _PLATFORM_GROUP_ID_KEYS
+                if candidate.get(key) not in (None, "")
+            ),
+            "",
+        )
+        name = next(
+            (
+                _clean_text(candidate.get(key), limit=100)
+                for key in _PLATFORM_GROUP_NAME_KEYS
+                if candidate.get(key) not in (None, "")
+            ),
+            "",
+        )
+        if re.fullmatch(r"[A-Za-z0-9._~-]{1,128}", group_id) and name:
+            groups[group_id] = {"id": group_id, "name": name}
+    return list(groups.values())
+
+
 def _safe_cover_url(value: Any) -> str | None:
     try:
         parsed = _parse_https_url(value, field="cover_url")
@@ -419,7 +497,7 @@ def _record_from_mapping(
         sources.update(
             item for item in supplied_sources if item in {"response", "dom"}
         )
-    return {
+    record = {
         "schema_version": VIDEO_ARCHIVE_SCHEMA_VERSION,
         "platform": "douyin",
         "video_id": video_id,
@@ -432,6 +510,10 @@ def _record_from_mapping(
         "observed_at": observed_at,
         "sources": sorted(sources),
     }
+    platform_groups = _platform_groups(raw)
+    if platform_groups:
+        record["platform_groups"] = platform_groups
+    return record
 
 
 def _looks_like_aweme(value: Mapping[str, Any]) -> bool:
@@ -553,6 +635,16 @@ def _merge_records(records: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]
         for field in ("title", "desc", "published_at", "cover_url"):
             if not current.get(field) and raw.get(field):
                 current[field] = raw[field]
+        platform_groups = {
+            str(item["id"]): dict(item)
+            for item in current.get("platform_groups") or ()
+            if isinstance(item, Mapping) and item.get("id")
+        }
+        for item in raw.get("platform_groups") or ():
+            if isinstance(item, Mapping) and item.get("id"):
+                platform_groups[str(item["id"])] = dict(item)
+        if platform_groups:
+            current["platform_groups"] = list(platform_groups.values())
         metrics = dict(current.get("visible_metrics") or {})
         priorities = metric_priorities[video_id]
         for key, value in dict(raw.get("visible_metrics") or {}).items():
@@ -858,6 +950,18 @@ def archive_profile_videos(
                 "last_seen": last_seen,
                 "latest_metadata": latest_metadata,
                 "cover": cover,
+                "platform_groups": (
+                    list(record.get("platform_groups") or ())
+                    if existing is None
+                    or (
+                        current_is_latest
+                        and (
+                            "response" in record.get("sources", ())
+                            or "platform_groups" in record
+                        )
+                    )
+                    else list(existing.get("platform_groups") or ())
+                ),
             }
             plans.append((record, metadata_path, manifest_path, manifest))
 

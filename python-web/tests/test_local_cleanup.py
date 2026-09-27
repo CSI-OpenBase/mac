@@ -10,7 +10,11 @@ from admin_app.local_cleanup import (
     clear_local_data,
     recover_local_cleanup,
 )
-from admin_app.local_config import LocalSettings
+from admin_app.local_config import (
+    COMMENT_EXPORT_DIRECTORY_KEY,
+    LOCAL_PREFERENCES_META_KEY,
+    LocalSettings,
+)
 from admin_app.local_store import ActiveLocalJobsError, LocalStore
 
 
@@ -141,6 +145,14 @@ def test_clear_all_removes_collected_data_but_preserves_workspace_shell(
     tmp_path: Path,
 ) -> None:
     settings, store = seed_workspace(tmp_path)
+    external_comments = settings.data_home / "saved-comments"
+    external_comments.mkdir()
+    external_file = external_comments / "comments.jsonl"
+    external_file.write_text("{}\n", encoding="utf-8")
+    store.set_meta(
+        LOCAL_PREFERENCES_META_KEY,
+        {COMMENT_EXPORT_DIRECTORY_KEY: str(external_comments)},
+    )
 
     result = clear_local_data(settings, store, "all")
 
@@ -157,6 +169,10 @@ def test_clear_all_removes_collected_data_but_preserves_workspace_shell(
     assert store.list_videos() == []
     assert store.list_jobs() == []
     assert store.get_meta("creator_identity", {}) == {}
+    assert store.get_meta(LOCAL_PREFERENCES_META_KEY, {}) == {
+        COMMENT_EXPORT_DIRECTORY_KEY: str(external_comments)
+    }
+    assert external_file.is_file()
     assert (settings.data_home / "user-note.txt").read_text(encoding="utf-8") == "keep me\n"
     assert (settings.log_dir / "openbase.log").is_file()
     assert (settings.browser_profile_dir / "Cookies").is_file()

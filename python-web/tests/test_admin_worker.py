@@ -390,13 +390,67 @@ def test_response_accumulator_isolates_reply_with_unavailable_parent() -> None:
         assessment.records, warnings=assessment.warnings
     )
 
-    assert assessment.status == "partial"
+    assert assessment.status == "complete"
     assert [row["comment_id"] for row in assessment.records] == [ROOT_ID]
     assert any(orphan_id in warning for warning in assessment.warnings)
     assert diagnostics["observed_records"] == 2
     assert diagnostics["captured_records"] == 1
     assert diagnostics["rejected_records"] == 1
+    assert diagnostics["orphan_reply_count"] == 1
     assert diagnostics["warnings"] == list(assessment.warnings)
+
+
+def test_response_accumulator_cascades_unavailable_parent_exclusion() -> None:
+    accumulator = _accumulator(declared_replies=2, include_reply=False)
+    parent_id = "3333333333333333333"
+    child_id = "4444444444444444444"
+    accumulator.consume(
+        "https://www.douyin.com/aweme/v1/web/comment/list/reply/"
+        f"?aweme_id={VIDEO_ID}&comment_id={ROOT_ID}",
+        {
+            "status_code": 0,
+            "has_more": False,
+            "comments": [
+                {
+                    "cid": parent_id,
+                    "aweme_id": VIDEO_ID,
+                    "root_comment_id": ROOT_ID,
+                    "reply_to_reply_id": "5555555555555555555",
+                    "text": "上级回复不可见",
+                    "user": {"uid": "viewer-parent"},
+                },
+                {
+                    "cid": child_id,
+                    "aweme_id": VIDEO_ID,
+                    "root_comment_id": ROOT_ID,
+                    "reply_to_reply_id": parent_id,
+                    "text": "回复不可见的上级",
+                    "user": {"uid": "viewer-child"},
+                },
+            ],
+        },
+    )
+
+    assessment = accumulator.assessment()
+
+    assert assessment.status == "complete"
+    assert assessment.blockers == ()
+    assert [row["comment_id"] for row in assessment.records] == [ROOT_ID]
+    assert any(parent_id in warning for warning in assessment.warnings)
+    assert any(child_id in warning for warning in assessment.warnings)
+    assert not any(
+        "relation validation failed" in warning
+        for warning in assessment.warnings
+    )
+    assert collector_module._capture_message(
+        assessment.status,
+        len(assessment.records),
+        blockers=assessment.blockers,
+        warnings=assessment.warnings,
+    ) == (
+        "采集完成：已保存 1 条匿名评论及回复；"
+        "父评论可能已删除，发现 2 条孤儿评论，已跳过"
+    )
 
 
 def test_response_accumulator_closes_multi_page_replies() -> None:

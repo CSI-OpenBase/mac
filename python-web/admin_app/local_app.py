@@ -6,6 +6,7 @@ import hmac
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import (
@@ -27,9 +28,20 @@ from .local_cleanup import (
     clear_local_data,
     recover_local_cleanup,
 )
-from .local_config import LocalSettings, load_local_settings
+from .local_config import (
+    COMMENT_EXPORT_DIRECTORY_KEY,
+    LOCAL_PREFERENCES_META_KEY,
+    LocalSettings,
+    load_local_settings,
+    prepare_comment_export_directory,
+)
 from .local_lock import WorkspaceLease
-from .local_store import ActiveCommentJobError, ActiveLocalJobsError, LocalStore
+from .local_store import (
+    GROUP_ID_RE,
+    ActiveCommentJobError,
+    ActiveLocalJobsError,
+    LocalStore,
+)
 from .security import add_flash, csrf_token, pop_flashes, validate_csrf
 from .viewmodels import pagination
 
@@ -59,7 +71,18 @@ def _video_page_size(value: Any) -> int:
 def _video_return_path(form: Any) -> str:
     page = _video_page(form.get("page"))
     page_size = _video_page_size(form.get("page_size"))
-    return f"/?page={page}&page_size={page_size}#video-archive"
+    query: dict[str, Any] = {"page": page, "page_size": page_size}
+    group_id = _video_group_filter(form.get("group_id"))
+    if group_id:
+        query["group_id"] = group_id
+    return f"/?{urlencode(query)}#video-archive"
+
+
+def _video_group_filter(value: Any) -> str | None:
+    group_id = str(value or "").strip()
+    if group_id == "ungrouped" or GROUP_ID_RE.fullmatch(group_id):
+        return group_id
+    return None
 
 
 class DesktopTokenMiddleware(BaseHTTPMiddleware):
@@ -177,8 +200,17 @@ def create_local_app(
         requested_page_size = _video_page_size(
             request.query_params.get("page_size")
         )
+        requested_group_id = _video_group_filter(
+            request.query_params.get("group_id")
+        )
+        groups = store.list_groups()
+        known_groups = {str(group["group_id"]): group for group in groups}
+        if requested_group_id not in {None, "ungrouped"} and requested_group_id not in known_groups:
+            requested_group_id = None
         video_page = store.list_video_page(
-            page=requested_page, page_size=requested_page_size
+            page=requested_page,
+            page_size=requested_page_size,
+            group_id=requested_group_id,
         )
         account = store.get_meta("creator_identity", {})
         last_discovery = store.get_meta("last_video_sync", {})
@@ -193,12 +225,23 @@ def create_local_app(
             "videos": video_page["items"],
             "video_total": video_page["total"],
             "video_page_size": video_page["page_size"],
+            "groups": groups,
+            "manual_groups": [group for group in groups if group["source"] == "manual"],
+            "selected_group_id": requested_group_id,
+            "selected_group": known_groups.get(str(requested_group_id or "")),
             "video_pagination": pagination(
                 page=video_page["page"],
                 total_pages=video_page["pages"],
                 total_items=video_page["total"],
                 path="/",
-                query={"page_size": video_page["page_size"]},
+                query={
+                    "page_size": video_page["page_size"],
+                    **(
+                        {"group_id": requested_group_id}
+                        if requested_group_id
+                        else {}
+                    ),
+                },
                 fragment="video-archive",
             ),
             "active_jobs": store.active_job_count(),
@@ -223,6 +266,65 @@ def create_local_app(
     @app.get("/", response_class=HTMLResponse)
     def home(request: Request) -> HTMLResponse:
         return templates.TemplateResponse(request, "local_home.html", page_context(request))
+
+    @app.get("/settings", response_class=HTMLResponse)
+    def local_settings_page(request: Request) -> HTMLResponse:
+        preferences = store.get_meta(LOCAL_PREFERENCES_META_KEY, {})
+        jobs = store.list_jobs(limit=1)
+        comment_export_directory = (
+            preferences.get(COMMENT_EXPORT_DIRECTORY_KEY, "")
+            if isinstance(preferences, dict)
+            else ""
+        )
+        account = store.get_meta("creator_identity", {})
+        return templates.TemplateResponse(
+            request,
+            "local_settings.html",
+            {
+                "request": request,
+                "app_version": __version__,
+                "csrf_token": csrf_token(request),
+                "flashes": pop_flashes(request),
+                "account": account,
+                "authorized": bool(account and account.get("handle")),
+                "active_jobs": store.active_job_count(),
+                "latest_job_id": jobs[0]["id"] if jobs else "",
+                "comment_export_directory": str(comment_export_directory or ""),
+                "default_comment_directory": str(
+                    settings.works_dir / "videos" / "douyin" / "<视频ID>" / "comments"
+                ),
+            },
+        )
+
+    @app.post("/settings/comments")
+    async def save_comment_settings(request: Request) -> RedirectResponse:
+        form = await request.form()
+        validate_csrf(request, form)
+        if store.active_job_count():
+            add_flash(request, "任务运行时不可修改设置", "warning")
+            return _redirect("/settings")
+        try:
+            selected = prepare_comment_export_directory(
+                str(form.get("comment_export_directory") or ""), settings
+            )
+        except (OSError, ValueError) as exc:
+            add_flash(request, str(exc), "error")
+            return _redirect("/settings")
+
+        preferences = store.get_meta(LOCAL_PREFERENCES_META_KEY, {})
+        if not isinstance(preferences, dict):
+            preferences = {}
+        preferences[COMMENT_EXPORT_DIRECTORY_KEY] = (
+            str(selected) if selected is not None else ""
+        )
+        store.set_meta(LOCAL_PREFERENCES_META_KEY, preferences)
+        message = (
+            f"评论将额外导出到 {selected}"
+            if selected is not None
+            else "已恢复默认，仅保存在工作目录的视频档案中"
+        )
+        add_flash(request, message, "success")
+        return _redirect("/settings")
 
     def submit(
         request: Request,
@@ -311,6 +413,78 @@ def create_local_app(
                     "success",
                 )
         return _redirect()
+
+    @app.post("/groups")
+    async def create_group(request: Request) -> RedirectResponse:
+        form = await request.form()
+        validate_csrf(request, form)
+        try:
+            group = store.create_group(str(form.get("name") or ""))
+        except ValueError as exc:
+            add_flash(request, str(exc), "error")
+            return _redirect("/#video-archive")
+        add_flash(request, f"已创建分组“{group['name']}”", "success")
+        return _redirect(
+            f"/?{urlencode({'group_id': group['group_id']})}#video-archive"
+        )
+
+    @app.post("/groups/{group_id}/rename")
+    async def rename_group(request: Request, group_id: str) -> RedirectResponse:
+        form = await request.form()
+        validate_csrf(request, form)
+        try:
+            group = store.rename_group(group_id, str(form.get("name") or ""))
+        except ValueError as exc:
+            add_flash(request, str(exc), "error")
+        else:
+            add_flash(request, f"分组已重命名为“{group['name']}”", "success")
+        return _redirect(_video_return_path(form))
+
+    @app.post("/groups/{group_id}/delete")
+    async def delete_group(request: Request, group_id: str) -> RedirectResponse:
+        form = await request.form()
+        validate_csrf(request, form)
+        group = store.get_group(group_id)
+        try:
+            store.delete_group(group_id)
+        except ValueError as exc:
+            add_flash(request, str(exc), "error")
+        else:
+            name = str(group["name"]) if group else "该分组"
+            add_flash(request, f"已删除分组“{name}”，作品档案仍然保留", "success")
+        return _redirect("/#video-archive")
+
+    async def change_group_videos(
+        request: Request, *, add: bool
+    ) -> RedirectResponse:
+        form = await request.form()
+        validate_csrf(request, form)
+        raw_group_id = (
+            form.get("target_group_id") if add else form.get("group_id")
+        )
+        group_id = str(raw_group_id or "").strip()
+        video_ids = list(
+            dict.fromkeys(str(value).strip() for value in form.getlist("video_id"))
+        )
+        try:
+            if add:
+                changed = store.add_videos_to_group(group_id, video_ids)
+            else:
+                changed = store.remove_videos_from_group(group_id, video_ids)
+        except ValueError as exc:
+            add_flash(request, str(exc), "error")
+        else:
+            action = "加入" if add else "移出"
+            add_flash(request, f"已将 {changed} 个作品{action}分组", "success")
+        return _redirect(_video_return_path(form))
+
+    @app.post("/groups/videos/add")
+    async def add_group_videos(request: Request) -> RedirectResponse:
+        return await change_group_videos(request, add=True)
+
+    @app.post("/groups/videos/remove")
+    async def remove_group_videos(request: Request) -> RedirectResponse:
+        return await change_group_videos(request, add=False)
 
     @app.post("/videos/{video_id}/comments")
     async def export_comments(request: Request, video_id: str) -> RedirectResponse:

@@ -94,6 +94,84 @@ def test_empty_video_page_stays_on_page_one(tmp_path: Path) -> None:
     }
 
 
+def test_platform_columns_and_manual_groups_are_managed_independently(
+    tmp_path: Path,
+) -> None:
+    store = LocalStore(tmp_path / "openbase.sqlite3")
+    first = video_record("7680023068660346011")
+    first.update(
+        {
+            "platform_groups_observed": True,
+            "platform_groups": [
+                {"id": "7348687990509553679", "name": "双离合知识库"}
+            ],
+        }
+    )
+    second = video_record("7680023068660346012")
+    second["platform_groups_observed"] = True
+    store.upsert_videos([first, second])
+
+    groups = store.list_groups()
+    assert [(group["name"], group["source"], group["video_count"]) for group in groups] == [
+        ("双离合知识库", "platform", 1)
+    ]
+    platform_group_id = groups[0]["group_id"]
+    platform_items = store.list_video_page(group_id=platform_group_id)["items"]
+    assert [item["video_id"] for item in platform_items] == [
+        "7680023068660346011"
+    ]
+
+    manual = store.create_group(" 待复盘  ")
+    assert manual["name"] == "待复盘"
+    assert store.add_videos_to_group(
+        manual["group_id"],
+        ["7680023068660346011", "7680023068660346012"],
+    ) == 2
+    assert store.add_videos_to_group(manual["group_id"], ["7680023068660346011"]) == 0
+
+    first["platform_groups"] = []
+    store.upsert_videos([first])
+    assert [group["name"] for group in store.get_video("7680023068660346011")["groups"]] == [
+        "待复盘"
+    ]
+    assert store.prune_empty_platform_groups() == 1
+    assert store.list_video_page(group_id="ungrouped")["total"] == 0
+
+    renamed = store.rename_group(manual["group_id"], "优先跟进")
+    assert renamed["name"] == "优先跟进"
+    assert store.remove_videos_from_group(
+        manual["group_id"], ["7680023068660346012"]
+    ) == 1
+    assert store.list_video_page(group_id="ungrouped")["items"][0]["video_id"] == (
+        "7680023068660346012"
+    )
+    store.delete_group(manual["group_id"])
+    assert store.list_groups() == []
+
+
+def test_platform_groups_are_read_only_and_all_cleanup_removes_groups(
+    tmp_path: Path,
+) -> None:
+    store = LocalStore(tmp_path / "openbase.sqlite3")
+    record = video_record()
+    record.update(
+        {
+            "platform_groups_observed": True,
+            "platform_groups": [{"id": "7348687990509553679", "name": "平台栏目"}],
+        }
+    )
+    store.upsert_videos([record])
+    platform_group = store.list_groups()[0]
+    with pytest.raises(ValueError, match="只能重命名"):
+        store.rename_group(platform_group["group_id"], "改名")
+    with pytest.raises(ValueError, match="只能管理"):
+        store.add_videos_to_group(platform_group["group_id"], [record["video_id"]])
+
+    operation_id = "a" * 32
+    store.clear_records("all", operation_id=operation_id)
+    assert store.list_groups() == []
+
+
 def test_video_index_records_visible_comments_without_claiming_an_export(
     tmp_path: Path,
 ) -> None:

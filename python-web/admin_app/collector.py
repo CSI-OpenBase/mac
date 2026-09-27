@@ -2,9 +2,9 @@
 
 Only normalized, anonymous comment records are written. Raw HTTP responses are
 never persisted, and browser state stays in the repository's ignored runtime
-directory. A capture is reported as complete when structural counts match and
-Douyin's aggregate total is within the allowed variance, or partial when every
-page was exhausted but a material count gap remains.
+directory. A capture is reported as complete when structural counts match,
+Douyin's aggregate total is within the allowed variance, or a closed reply
+thread differs only because platform-hidden parent replies created orphans.
 """
 
 from __future__ import annotations
@@ -57,6 +57,7 @@ LOGIN_TEXTS = (
 BLOCKER_SCOPE_SELECTOR = "dialog, [role='dialog'], [role='alert'], form"
 ZERO_IDS = {"", "0", "-1", "None", "null"}
 REPORTED_TOTAL_TOLERANCE_PERCENT = 5
+UNAVAILABLE_PARENT_WARNING = "references an unavailable parent and was excluded"
 
 
 def utc_now() -> str:
@@ -133,6 +134,35 @@ def _reported_total_matches(
     return any(
         _count_within_tolerance(reported, captured)
         for captured in {root_count, record_count}
+    )
+
+
+def _is_orphan_reply_warning(value: str) -> bool:
+    return value.startswith("Reply ") and UNAVAILABLE_PARENT_WARNING in value
+
+
+def _capture_message(
+    status: str,
+    record_count: int,
+    *,
+    blockers: Sequence[str],
+    warnings: Sequence[str],
+) -> str:
+    orphan_count = sum(_is_orphan_reply_warning(value) for value in warnings)
+    if status == "complete" and orphan_count:
+        return (
+            f"采集完成：已保存 {record_count} 条匿名评论及回复；"
+            f"父评论可能已删除，发现 {orphan_count} 条孤儿评论，已跳过"
+        )
+    if status == "complete":
+        return f"Capture complete: {record_count} anonymous comments and replies"
+    if status == "partial":
+        return (
+            f"Capture partial: {record_count} accessible anonymous comments and replies; "
+            + "; ".join(warnings)
+        )
+    return "; ".join(dict.fromkeys([*blockers, *warnings])) or (
+        "Completeness could not be established"
     )
 
 
@@ -508,9 +538,10 @@ class ResponseAccumulator:
 
     def _materialize(
         self,
-    ) -> tuple[list[dict[str, Any]], list[str], list[str]]:
+    ) -> tuple[list[dict[str, Any]], list[str], list[str], set[str]]:
         errors = list(self._errors)
         warnings: list[str] = []
+        orphan_roots: set[str] = set()
         confirmed_empty = bool(
             not self._comments
             and self._root_terminal_seen
@@ -521,7 +552,7 @@ class ResponseAccumulator:
                 "The video author identity was not observed, so creator replies "
                 "cannot be classified reliably"
             )
-            return [], list(dict.fromkeys(errors)), warnings
+            return [], list(dict.fromkeys(errors)), warnings, orphan_roots
         normalized: list[dict[str, Any]] = []
         for captured in self._comments.values():
             record = dict(captured.record)
@@ -540,7 +571,7 @@ class ResponseAccumulator:
 
         normalized, _ = deduplicate_records(normalized)
         ids = {row["comment_id"] for row in normalized}
-        valid: list[dict[str, Any]] = []
+        candidates: list[dict[str, Any]] = []
         for row in normalized:
             if row["comment_type"] == "reply":
                 if row["root_comment_id"] not in ids:
@@ -549,13 +580,32 @@ class ResponseAccumulator:
                         "was not captured"
                     )
                     continue
-                if row["parent_comment_id"] not in ids:
+            candidates.append(row)
+
+        # Removing one unavailable reply can make its descendants unavailable
+        # too. Resolve the relation closure before the strict final validator.
+        while True:
+            candidate_ids = {row["comment_id"] for row in candidates}
+            unavailable = {
+                row["comment_id"]
+                for row in candidates
+                if row["comment_type"] == "reply"
+                and row["parent_comment_id"] not in candidate_ids
+            }
+            if not unavailable:
+                break
+            retained: list[dict[str, Any]] = []
+            for row in candidates:
+                if row["comment_id"] in unavailable:
+                    orphan_roots.add(str(row["root_comment_id"]))
                     warnings.append(
                         f"Reply {row['comment_id']} references an unavailable parent "
                         "and was excluded"
                     )
                     continue
-            valid.append(row)
+                retained.append(row)
+            candidates = retained
+        valid = candidates
         try:
             validate_record_relations(valid)
         except CommentDataError as exc:
@@ -564,10 +614,14 @@ class ResponseAccumulator:
             valid,
             list(dict.fromkeys(errors)),
             list(dict.fromkeys(warnings)),
+            orphan_roots,
         )
 
     def assessment(self) -> CaptureAssessment:
-        records, blockers, warnings = self._materialize()
+        records, blockers, warnings, orphan_roots = self._materialize()
+        nonblocking_warnings = {
+            warning for warning in warnings if _is_orphan_reply_warning(warning)
+        }
         if not self._root_response_seen:
             blockers.append("No recognized root-comment response was observed")
         elif not self._root_terminal_seen:
@@ -592,7 +646,12 @@ class ResponseAccumulator:
                     )
                     + ")"
                 )
-                (warnings if terminal else blockers).append(message)
+                if terminal:
+                    warnings.append(message)
+                    if root_id in orphan_roots:
+                        nonblocking_warnings.add(message)
+                else:
+                    blockers.append(message)
 
         root_count = sum(row["comment_type"] == "root" for row in records)
         if self._reported_total is not None and not _reported_total_matches(
@@ -616,7 +675,14 @@ class ResponseAccumulator:
 
         blockers = list(dict.fromkeys(blockers))
         warnings = list(dict.fromkeys(warnings))
-        status = "blocked" if blockers else ("partial" if warnings else "complete")
+        material_warnings = [
+            warning for warning in warnings if warning not in nonblocking_warnings
+        ]
+        status = (
+            "blocked"
+            if blockers
+            else ("partial" if material_warnings else "complete")
+        )
         return CaptureAssessment(
             status=status,
             blockers=tuple(blockers),
@@ -667,6 +733,9 @@ class ResponseAccumulator:
                 count > 0 for count in self._root_expected_replies.values()
             ),
             "warnings": list(warnings),
+            "orphan_reply_count": sum(
+                _is_orphan_reply_warning(value) for value in warnings
+            ),
         }
 
 
@@ -903,17 +972,12 @@ def collect_video(
 
     diagnostics = accumulator.diagnostics(records, warnings=warnings)
     diagnostics["batch_name"] = batch_name
-    if status == "complete":
-        message = f"Capture complete: {len(records)} anonymous comments and replies"
-    elif status == "partial":
-        message = (
-            f"Capture partial: {len(records)} accessible anonymous comments and replies; "
-            + "; ".join(warnings)
-        )
-    else:
-        message = "; ".join(dict.fromkeys([*blockers, *warnings])) or (
-            "Completeness could not be established"
-        )
+    message = _capture_message(
+        status,
+        len(records),
+        blockers=blockers,
+        warnings=warnings,
+    )
     return CollectionResult(
         status=status,
         message=message,

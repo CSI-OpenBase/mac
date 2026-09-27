@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>设置 - CSI OpenBase</title>
+  <link rel="icon" type="image/svg+xml" href="/static/brand/favicon.svg">
+  <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
+  <link rel="stylesheet" href="/static/local.css">
+  <script src="/static/vendor/lucide.min.js" defer></script>
+  <script src="/static/local.js" defer></script>
+</head>
+<body data-active-jobs="{{ active_jobs }}" data-latest-job="{{ latest_job_id }}">
+  <header class="app-header">
+    <div class="brand"><img class="brand-mark" src="/static/brand/openbase-mark-reversed.svg" width="28" height="28" alt="" aria-hidden="true"><strong>CSI OpenBase</strong><span class="brand-version">v{{ app_version }}</span></div>
+    <div class="header-actions">
+      <div class="header-status"><span class="status-dot {{ 'ok' if authorized else 'idle' }}"></span><span>{{ account.display_name if authorized else '未连接账号' }}</span></div>
+      <a class="header-tool" href="/"><i data-lucide="arrow-left" aria-hidden="true"></i><span>返回首页</span></a>
+    </div>
+  </header>
+
+  {% if flashes %}
+  <div class="toast-stack" aria-live="polite">
+    {% for flash in flashes %}<div class="toast toast-{{ flash.kind }}">{{ flash.message }}</div>{% endfor %}
+  </div>
+  {% endif %}
+
+  <main class="settings-main">
+    <section class="settings-heading">
+      <h1>设置</h1>
+      <p>当前工作目录的本地选项</p>
+    </section>
+    <section class="settings-section" aria-labelledby="comment-export-title">
+      <div class="settings-section-heading">
+        <h2 id="comment-export-title">评论导出目录</h2>
+        <p>每次评论采集完成后，将匿名化 JSONL 额外复制到此目录。内部档案仍保留在工作目录中。</p>
+      </div>
+      <form method="post" action="/settings/comments" class="settings-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label for="comment-export-directory">目录路径</label>
+        <div class="directory-control">
+          <input id="comment-export-directory" name="comment_export_directory" type="text" value="{{ comment_export_directory }}" placeholder="例如 D:\CSI OpenBase\评论导出" autocomplete="off" spellcheck="false" data-comment-export-directory>
+          <button class="button button-secondary" type="button" data-comment-directory-picker hidden><i data-lucide="folder-open" aria-hidden="true"></i><span>选择目录</span></button>
+        </div>
+        <p class="field-help">留空即恢复默认：{{ default_comment_directory }}</p>
+        <div class="settings-actions">
+          <button class="button button-primary" type="submit" {% if active_jobs %}disabled{% endif %}><i data-lucide="save" aria-hidden="true"></i><span>保存设置</span></button>
+          {% if active_jobs %}<span class="settings-warning">任务运行时不可修改设置</span>{% endif %}
+        </div>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

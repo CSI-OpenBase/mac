@@ -14,9 +14,12 @@
 <body data-active-jobs="{{ active_jobs }}" data-latest-job="{{ jobs[0].id if jobs else '' }}">
   <header class="app-header">
     <div class="brand"><img class="brand-mark" src="/static/brand/openbase-mark-reversed.svg" width="28" height="28" alt="" aria-hidden="true"><strong>CSI OpenBase</strong><span class="brand-version">v{{ app_version }}</span></div>
-    <div class="header-status">
-      <span class="status-dot {{ 'ok' if authorized else 'idle' }}"></span>
-      <span>{{ account.display_name if authorized else '未连接账号' }}</span>
+    <div class="header-actions">
+      <div class="header-status">
+        <span class="status-dot {{ 'ok' if authorized else 'idle' }}"></span>
+        <span>{{ account.display_name if authorized else '未连接账号' }}</span>
+      </div>
+      <a class="header-tool" href="/settings"><i data-lucide="settings" aria-hidden="true"></i><span>设置</span></a>
     </div>
   </header>
 
@@ -67,11 +70,44 @@
     </section>
 
     <section class="content-band" id="video-archive">
+      <div class="group-manager">
+        <div class="group-filter" aria-label="视频分组筛选">
+          <a class="group-filter-item {{ 'is-active' if not selected_group_id else '' }}" href="/?page_size={{ video_page_size }}#video-archive"><span>全部作品</span></a>
+          <a class="group-filter-item {{ 'is-active' if selected_group_id == 'ungrouped' else '' }}" href="/?page_size={{ video_page_size }}&amp;group_id=ungrouped#video-archive"><span>未分组</span></a>
+          {% for group in groups %}
+          <a class="group-filter-item {{ 'is-active' if selected_group_id == group.group_id else '' }}" href="/?page_size={{ video_page_size }}&amp;group_id={{ group.group_id }}#video-archive"><i data-lucide="{{ 'gallery-vertical-end' if group.source == 'platform' else 'folder' }}" aria-hidden="true"></i><span>{{ group.name }}</span><small>{{ group.video_count }}</small></a>
+          {% endfor %}
+        </div>
+        <form method="post" action="/groups" class="group-create-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <label class="sr-only" for="new-group-name">新分组名称</label>
+          <input id="new-group-name" name="name" type="text" maxlength="100" placeholder="新建分组" required>
+          <button class="button button-secondary" type="submit"><i data-lucide="folder-plus" aria-hidden="true"></i><span>创建</span></button>
+        </form>
+      </div>
+      {% if selected_group and selected_group.source == 'manual' %}
+      <div class="selected-group-manager">
+        <form method="post" action="/groups/{{ selected_group.group_id }}/rename" class="group-rename-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="page" value="{{ video_pagination.page }}">
+          <input type="hidden" name="page_size" value="{{ video_page_size }}">
+          <input type="hidden" name="group_id" value="{{ selected_group.group_id }}">
+          <label for="selected-group-name">分组名称</label>
+          <input id="selected-group-name" name="name" type="text" maxlength="100" value="{{ selected_group.name }}" required>
+          <button class="icon-button" type="submit" title="保存分组名称"><i data-lucide="save" aria-hidden="true"></i><span class="sr-only">保存分组名称</span></button>
+        </form>
+        <form method="post" action="/groups/{{ selected_group.group_id }}/delete">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button class="icon-button group-delete-button" type="submit" title="删除分组" data-group-delete="{{ selected_group.name }}"><i data-lucide="folder-x" aria-hidden="true"></i><span class="sr-only">删除分组</span></button>
+        </form>
+      </div>
+      {% endif %}
       <div class="section-heading">
-        <div><h2>视频档案</h2><span>{{ video_total }} 个视频</span></div>
+        <div><h2>{{ selected_group.name if selected_group else ('未分组' if selected_group_id == 'ungrouped' else '视频档案') }}</h2><span>{{ video_total }} 个视频</span></div>
         <div class="video-heading-actions">
           <form class="page-size-form" method="get" action="/#video-archive">
             <input type="hidden" name="page" value="1">
+            {% if selected_group_id %}<input type="hidden" name="group_id" value="{{ selected_group_id }}">{% endif %}
             <label for="video-page-size">每页</label>
             <select id="video-page-size" name="page_size">
               {% for size in (30, 50, 100) %}<option value="{{ size }}" {{ 'selected' if video_page_size == size else '' }}>{{ size }}</option>{% endfor %}
@@ -79,6 +115,17 @@
             <span>条</span>
             <button class="icon-button" type="submit" title="应用每页数量"><i data-lucide="check" aria-hidden="true"></i><span class="sr-only">应用每页数量</span></button>
           </form>
+          {% if videos and manual_groups %}
+          <label class="group-add-control">
+            <span class="sr-only">选择目标分组</span>
+            <select name="target_group_id" form="comment-batch">
+              <option value="">加入分组…</option>
+              {% for group in manual_groups %}<option value="{{ group.group_id }}">{{ group.name }}</option>{% endfor %}
+            </select>
+          </label>
+          <button class="button button-secondary" type="submit" form="comment-batch" formaction="/groups/videos/add"><i data-lucide="folder-input" aria-hidden="true"></i><span>加入</span></button>
+          {% endif %}
+          {% if videos and selected_group and selected_group.source == 'manual' %}<button class="button button-secondary" type="submit" form="comment-batch" formaction="/groups/videos/remove"><i data-lucide="folder-output" aria-hidden="true"></i><span>移出分组</span></button>{% endif %}
           {% if videos %}<button class="button button-secondary" type="submit" form="comment-batch"><i data-lucide="message-square-down" aria-hidden="true"></i><span>导出所选评论</span></button>{% endif %}
         </div>
       </div>
@@ -86,21 +133,23 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="page" value="{{ video_pagination.page }}">
         <input type="hidden" name="page_size" value="{{ video_page_size }}">
+        {% if selected_group_id %}<input type="hidden" name="group_id" value="{{ selected_group_id }}">{% endif %}
         <div class="table-wrap">
           <table>
-            <thead><tr><th class="select-cell"><input type="checkbox" data-select-all aria-label="选择本页全部视频" {% if not videos %}disabled{% endif %}></th><th>视频</th><th>首次发现</th><th>最近同步</th><th>评论数</th><th class="action-cell">操作</th></tr></thead>
+            <thead><tr><th class="select-cell"><input type="checkbox" data-select-all aria-label="选择本页全部视频" {% if not videos %}disabled{% endif %}></th><th>视频</th><th>分组</th><th>首次发现</th><th>最近同步</th><th>评论数</th><th class="action-cell">操作</th></tr></thead>
             <tbody>
               {% for video in videos %}
               <tr>
                 <td class="select-cell"><input type="checkbox" name="video_id" value="{{ video.video_id }}" aria-label="选择 {{ video.title }}"></td>
                 <td><a href="{{ video.video_url }}" target="_blank" rel="noopener noreferrer" class="video-title">{{ video.title }}</a><code>{{ video.video_id }}</code></td>
+                <td><div class="video-group-tags">{% for group in video.groups %}<a href="/?page_size={{ video_page_size }}&amp;group_id={{ group.group_id }}#video-archive" class="group-tag group-tag-{{ group.source }}">{{ group.name }}</a>{% else %}<span class="cell-note">未分组</span>{% endfor %}</div></td>
                 <td><time>{{ video.first_seen_at }}</time></td>
                 <td><time>{{ video.last_seen_at }}</time></td>
                 <td><strong>{% if video.visible_comment_count is not none %}{{ "{:,}".format(video.visible_comment_count) }}{% else %}—{% endif %}</strong><span class="cell-note">{% if video.last_comment_count_at %}{% if video.comment_count_delta is none %}首次获取{% elif video.comment_count_delta > 0 %}较上次 +{{ "{:,}".format(video.comment_count_delta) }}{% elif video.comment_count_delta < 0 %}较上次 {{ "{:,}".format(video.comment_count_delta) }}{% else %}较上次无变化{% endif %} · {{ video.last_comment_count_at }}{% else %}尚未获取评论数{% endif %}</span><span class="cell-note">{% if video.last_comment_export_at %}上次导出 {{ "{:,}".format(video.comment_count|default(0)) }} 条 · {{ video.last_comment_export_at }}{% else %}尚未导出评论{% endif %}</span></td>
                 <td class="action-cell"><div class="video-actions"><button type="submit" class="button button-secondary comment-count-button" formmethod="post" formaction="/videos/{{ video.video_id }}/comment-count" title="仅更新评论数量，不导出评论内容"><i data-lucide="refresh-cw" aria-hidden="true"></i><span>获取最新评论</span></button><button type="submit" class="button button-secondary comment-export-button" formmethod="post" formaction="/videos/{{ video.video_id }}/comments"><i data-lucide="message-square-down" aria-hidden="true"></i><span>导出评论</span></button></div></td>
               </tr>
               {% else %}
-              <tr><td colspan="6" class="empty">暂无视频档案</td></tr>
+              <tr><td colspan="7" class="empty">暂无视频档案</td></tr>
               {% endfor %}
             </tbody>
           </table>

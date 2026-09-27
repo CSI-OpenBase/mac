@@ -10,7 +10,11 @@ import admin_app.local_app as local_app_module
 from admin_app import __version__
 from admin_app.local_app import create_local_app
 from admin_app.local_cleanup import ClearDataResult
-from admin_app.local_config import LocalSettings
+from admin_app.local_config import (
+    COMMENT_EXPORT_DIRECTORY_KEY,
+    LOCAL_PREFERENCES_META_KEY,
+    LocalSettings,
+)
 from admin_app.local_store import LocalStore
 
 
@@ -95,6 +99,52 @@ def test_local_home_and_manual_authorization_job(tmp_path: Path) -> None:
     assert runner.calls == [("authorize", {})]
 
 
+def test_comment_export_directory_setting_can_be_saved_and_reset(
+    tmp_path: Path,
+) -> None:
+    local_settings = settings(tmp_path)
+    store = LocalStore(local_settings.database_path)
+    runner = FakeRunner(store)
+    selected = tmp_path / "user-comment-exports"
+    with TestClient(
+        create_local_app(local_settings, store=store, runner=runner)
+    ) as client:
+        home = client.get("/")
+        assert 'href="/settings"' in home.text
+        page = client.get("/settings")
+        assert page.status_code == 200
+        assert "评论导出目录" in page.text
+        assert "data-comment-directory-picker" in page.text
+
+        response = client.post(
+            "/settings/comments",
+            data={
+                "csrf_token": csrf(client),
+                "comment_export_directory": str(selected),
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert response.headers["location"] == "/settings"
+        assert store.get_meta(LOCAL_PREFERENCES_META_KEY, {}) == {
+            COMMENT_EXPORT_DIRECTORY_KEY: str(selected.resolve())
+        }
+        assert str(selected.resolve()) in client.get("/settings").text
+
+        response = client.post(
+            "/settings/comments",
+            data={
+                "csrf_token": csrf(client),
+                "comment_export_directory": "",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert store.get_meta(LOCAL_PREFERENCES_META_KEY, {}) == {
+            COMMENT_EXPORT_DIRECTORY_KEY: ""
+        }
+
+
 def test_local_home_paginates_video_archive_with_selectable_page_size(
     tmp_path: Path,
 ) -> None:
@@ -131,6 +181,85 @@ def test_local_home_paginates_video_archive_with_selectable_page_size(
     assert rendered_video_ids(hundred.text) == list(reversed(video_ids[:5]))
     assert '<option value="100" selected>100</option>' in hundred.text
     assert rendered_video_ids(invalid.text) == list(reversed(video_ids[75:]))
+
+
+def test_local_home_creates_filters_and_manages_manual_video_groups(
+    tmp_path: Path,
+) -> None:
+    local_settings = settings(tmp_path)
+    store = LocalStore(local_settings.database_path)
+    video_ids = archive_videos(store, 2)
+    runner = FakeRunner(store)
+
+    with TestClient(
+        create_local_app(local_settings, store=store, runner=runner)
+    ) as client:
+        token = csrf(client)
+        created = client.post(
+            "/groups",
+            data={"csrf_token": token, "name": "待复盘"},
+            follow_redirects=False,
+        )
+        group = store.list_groups()[0]
+        assert created.status_code == 303
+        assert group["name"] == "待复盘"
+
+        added = client.post(
+            "/groups/videos/add",
+            data={
+                "csrf_token": token,
+                "target_group_id": group["group_id"],
+                "video_id": [video_ids[0]],
+                "page": "1",
+                "page_size": "30",
+            },
+            follow_redirects=False,
+        )
+        assert added.status_code == 303
+        filtered = client.get(
+            "/",
+            params={"group_id": group["group_id"], "page_size": 30},
+        )
+        assert rendered_video_ids(filtered.text) == [video_ids[0]]
+        assert ">待复盘</a>" in filtered.text
+        assert ">移出分组</span>" in filtered.text
+        assert 'formaction="/groups/videos/add"' in filtered.text
+
+        renamed = client.post(
+            f"/groups/{group['group_id']}/rename",
+            data={
+                "csrf_token": token,
+                "name": "重点作品",
+                "group_id": group["group_id"],
+                "page": "1",
+                "page_size": "30",
+            },
+            follow_redirects=False,
+        )
+        assert renamed.status_code == 303
+        assert store.get_group(group["group_id"])["name"] == "重点作品"
+
+        removed = client.post(
+            "/groups/videos/remove",
+            data={
+                "csrf_token": token,
+                "group_id": group["group_id"],
+                "video_id": [video_ids[0]],
+                "page": "1",
+                "page_size": "30",
+            },
+            follow_redirects=False,
+        )
+        assert removed.status_code == 303
+        assert store.get_group(group["group_id"])["video_count"] == 0
+
+        deleted = client.post(
+            f"/groups/{group['group_id']}/delete",
+            data={"csrf_token": token},
+            follow_redirects=False,
+        )
+        assert deleted.status_code == 303
+        assert store.list_groups() == []
 
 
 def test_local_home_exposes_scoped_clear_dialog(tmp_path: Path) -> None:

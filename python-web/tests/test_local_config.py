@@ -6,7 +6,11 @@ import pytest
 
 import admin_app.local_config as local_config_module
 import admin_app.runtime_paths as runtime_paths
-from admin_app.local_config import LocalSettings, load_local_settings
+from admin_app.local_config import (
+    LocalSettings,
+    load_local_settings,
+    prepare_comment_export_directory,
+)
 
 
 def _symlink_or_skip(link: Path, target: Path, *, is_directory: bool) -> None:
@@ -14,6 +18,39 @@ def _symlink_or_skip(link: Path, target: Path, *, is_directory: bool) -> None:
         link.symlink_to(target, target_is_directory=is_directory)
     except (NotImplementedError, OSError) as exc:
         pytest.skip(f"symlinks are not available in this environment: {exc}")
+
+
+def test_prepares_absolute_comment_export_directory(tmp_path: Path) -> None:
+    settings = LocalSettings(
+        data_home=tmp_path / "workspace",
+        session_home=tmp_path / "sessions",
+    )
+    settings.ensure_directories()
+
+    selected = prepare_comment_export_directory(
+        str(tmp_path / "visible-comments"), settings
+    )
+
+    assert selected == (tmp_path / "visible-comments").resolve()
+    assert selected.is_dir()
+    assert list(selected.iterdir()) == []
+
+
+def test_rejects_relative_or_managed_comment_export_directory(
+    tmp_path: Path,
+) -> None:
+    settings = LocalSettings(
+        data_home=tmp_path / "workspace",
+        session_home=tmp_path / "sessions",
+    )
+    settings.ensure_directories()
+
+    with pytest.raises(ValueError, match="完整路径"):
+        prepare_comment_export_directory("comments", settings)
+    with pytest.raises(ValueError, match="程序托管"):
+        prepare_comment_export_directory(
+            str(settings.works_dir / "visible-comments"), settings
+        )
 
 
 def test_desktop_browser_sessions_are_isolated_by_work_directory(

@@ -12,6 +12,8 @@ from .runtime_paths import default_runtime_root, require_safe_runtime_path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+LOCAL_PREFERENCES_META_KEY = "local_preferences"
+COMMENT_EXPORT_DIRECTORY_KEY = "comment_export_directory"
 
 
 def _resolve_path(value: str | None, default: Path) -> Path:
@@ -31,6 +33,43 @@ def _require_path_within(path: Path, root: Path, *, label: str) -> None:
         raise ValueError(
             f"{label} resolves outside its configured root: {resolved_path}"
         )
+
+
+def prepare_comment_export_directory(
+    value: str | None, settings: "LocalSettings"
+) -> Path | None:
+    """Validate and create the optional user-owned comment export directory."""
+    normalized = str(value or "").strip()
+    if not normalized:
+        return None
+    if "\x00" in normalized:
+        raise ValueError("评论导出目录无效")
+
+    candidate = Path(normalized).expanduser()
+    if not candidate.is_absolute():
+        raise ValueError("评论导出目录必须使用完整路径")
+    resolved = candidate.resolve(strict=False)
+    for managed in (settings.exports_dir, settings.works_dir):
+        if resolved.is_relative_to(managed.resolve(strict=False)):
+            raise ValueError("评论导出目录不能位于程序托管的 exports 或 works 目录中")
+    if resolved.is_relative_to(settings.browser_profile_dir.resolve(strict=False)):
+        raise ValueError("评论导出目录不能位于浏览器授权目录中")
+
+    resolved.mkdir(parents=True, exist_ok=True)
+    if not resolved.is_dir():
+        raise ValueError("评论导出目录不是文件夹")
+
+    probe = resolved / f".csi-openbase-write-{secrets.token_hex(8)}.tmp"
+    try:
+        probe.write_bytes(b"")
+    except OSError as exc:
+        raise ValueError(f"评论导出目录不可写：{exc}") from exc
+    finally:
+        try:
+            probe.unlink()
+        except FileNotFoundError:
+            pass
+    return resolved
 
 
 @dataclass(frozen=True, slots=True)

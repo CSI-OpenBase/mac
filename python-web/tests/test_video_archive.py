@@ -217,6 +217,33 @@ def test_response_parser_extracts_video_data_without_author_identity() -> None:
     serialized = json.dumps(videos, ensure_ascii=False)
     assert "不得存储的昵称" not in serialized
     assert "private-user-id" not in serialized
+
+
+def test_response_parser_extracts_platform_column_without_private_payload() -> None:
+    payload = {
+        "aweme_list": [
+            {
+                "aweme_id": "7390123456789012345",
+                "desc": "栏目作品",
+                "video": {"duration": 12_000},
+                "mix_info": {
+                    "mix_id": "7348687990509553679",
+                    "mix_name": "双离合知识库",
+                    "desc": "不应保存的平台栏目详情",
+                    "author": {"uid": "private-user-id"},
+                },
+            }
+        ]
+    }
+
+    videos = extract_videos_from_response(payload, observed_at=FIRST_SEEN)
+
+    assert videos[0]["platform_groups"] == [
+        {"id": "7348687990509553679", "name": "双离合知识库"}
+    ]
+    serialized = json.dumps(videos, ensure_ascii=False)
+    assert "不应保存的平台栏目详情" not in serialized
+    assert "private-user-id" not in serialized
     assert "play_addr" not in serialized
     assert ".mp4" not in serialized
 

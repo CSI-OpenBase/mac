@@ -21,6 +21,42 @@ document.addEventListener("DOMContentLoaded", () => {
     updateSelectAll();
   }
 
+  document.querySelectorAll("[data-group-delete]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      const name = button.dataset.groupDelete || "该分组";
+      if (!window.confirm(`删除分组“${name}”？作品档案不会被删除。`)) {
+        event.preventDefault();
+      }
+    });
+  });
+
+  const directoryInput = document.querySelector("[data-comment-export-directory]");
+  const directoryPicker = document.querySelector("[data-comment-directory-picker]");
+  const desktopBridge = window.chrome && window.chrome.webview;
+  if (directoryInput && directoryPicker && desktopBridge) {
+    directoryPicker.hidden = false;
+    directoryPicker.addEventListener("click", () => {
+      desktopBridge.postMessage(JSON.stringify({
+        type: "select-comment-export-directory",
+        current: directoryInput.value,
+      }));
+    });
+    desktopBridge.addEventListener("message", (event) => {
+      let message = event.data;
+      if (typeof message === "string") {
+        try {
+          message = JSON.parse(message);
+        } catch (_) {
+          return;
+        }
+      }
+      if (message?.type === "comment-export-directory-selected" && message.path) {
+        directoryInput.value = String(message.path);
+        directoryInput.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    });
+  }
+
   const clearDialog = document.querySelector("[data-clear-dialog]");
   const clearForm = document.querySelector("[data-clear-form]");
   const clearOpen = document.querySelector("[data-clear-open]");

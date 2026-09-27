@@ -7,14 +7,18 @@ external database dependency.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
 import threading
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping
+
+from .local_config import LOCAL_PREFERENCES_META_KEY
 
 
 JOB_KINDS = frozenset(
@@ -26,6 +30,9 @@ JOB_STATUSES = frozenset(
 CLEAR_DATA_SCOPES = frozenset({"exports", "comments", "all"})
 CLEAR_OPERATION_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 VIDEO_ID_RE = re.compile(r"^[0-9]{8,32}$")
+GROUP_ID_RE = re.compile(r"^(?:manual|platform):[a-z0-9][a-z0-9._:-]{0,127}$")
+PLATFORM_GROUP_KEY_RE = re.compile(r"^[A-Za-z0-9._~-]{1,128}$")
+MAX_GROUP_NAME_LENGTH = 100
 
 
 def utc_now() -> str:
@@ -45,6 +52,20 @@ def _decode(value: str | None, default: Any) -> Any:
         return json.loads(value)
     except json.JSONDecodeError:
         return default
+
+
+def _group_name(value: Any) -> str:
+    name = " ".join(str(value or "").split())
+    if not name:
+        raise ValueError("分组名称不能为空")
+    if len(name) > MAX_GROUP_NAME_LENGTH:
+        raise ValueError(f"分组名称不能超过 {MAX_GROUP_NAME_LENGTH} 个字符")
+    return name
+
+
+def _platform_group_id(platform: str, source_key: str) -> str:
+    digest = hashlib.sha256(f"{platform}:{source_key}".encode("utf-8")).hexdigest()[:24]
+    return f"platform:{platform}:{digest}"
 
 
 class ActiveCommentJobError(ValueError):
@@ -116,6 +137,33 @@ class LocalStore:
                 );
                 CREATE INDEX IF NOT EXISTS ix_archive_videos_last_seen
                     ON archive_videos(last_seen_at DESC, video_id DESC);
+                CREATE TABLE IF NOT EXISTS archive_groups (
+                    group_id TEXT PRIMARY KEY,
+                    platform TEXT NOT NULL DEFAULT 'douyin',
+                    name TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    source_key TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    CHECK(source IN ('platform', 'manual'))
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_archive_groups_platform_source
+                    ON archive_groups(platform, source_key)
+                    WHERE source = 'platform';
+                CREATE INDEX IF NOT EXISTS ix_archive_groups_name
+                    ON archive_groups(source, name, group_id);
+                CREATE TABLE IF NOT EXISTS archive_video_groups (
+                    group_id TEXT NOT NULL,
+                    video_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(group_id, video_id),
+                    FOREIGN KEY(group_id) REFERENCES archive_groups(group_id)
+                        ON DELETE CASCADE,
+                    FOREIGN KEY(video_id) REFERENCES archive_videos(video_id)
+                        ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS ix_archive_video_groups_video
+                    ON archive_video_groups(video_id, group_id);
                 CREATE TABLE IF NOT EXISTS archive_clear_operations (
                     operation_id TEXT PRIMARY KEY,
                     scope TEXT NOT NULL,
@@ -211,7 +259,11 @@ class LocalStore:
             else:
                 connection.execute("DELETE FROM archive_jobs")
                 connection.execute("DELETE FROM archive_videos")
-                connection.execute("DELETE FROM app_meta")
+                connection.execute("DELETE FROM archive_groups")
+                connection.execute(
+                    "DELETE FROM app_meta WHERE key <> ?",
+                    (LOCAL_PREFERENCES_META_KEY,),
+                )
                 connection.execute(
                     "DELETE FROM sqlite_sequence WHERE name = 'archive_jobs'"
                 )
@@ -471,21 +523,113 @@ class LocalStore:
                         visible_comment_count is not None,
                     ),
                 )
+                if record.get("platform_groups_observed") is True:
+                    self._replace_platform_groups(
+                        connection,
+                        video_id=video_id,
+                        platform=str(record.get("platform") or "douyin"),
+                        groups=record.get("platform_groups") or (),
+                        now=now,
+                    )
                 count += 1
         return count
+
+    @staticmethod
+    def _replace_platform_groups(
+        connection: sqlite3.Connection,
+        *,
+        video_id: str,
+        platform: str,
+        groups: Iterable[Mapping[str, Any]],
+        now: str,
+    ) -> None:
+        normalized: list[tuple[str, str]] = []
+        for raw in groups:
+            if not isinstance(raw, Mapping):
+                raise ValueError("平台栏目数据必须是对象")
+            source_key = str(raw.get("id") or "").strip()
+            if not PLATFORM_GROUP_KEY_RE.fullmatch(source_key):
+                raise ValueError("平台栏目 ID 格式无效")
+            normalized.append((source_key, _group_name(raw.get("name"))))
+
+        connection.execute(
+            """
+            DELETE FROM archive_video_groups
+             WHERE video_id = ?
+               AND group_id IN (
+                    SELECT group_id FROM archive_groups
+                     WHERE source = 'platform' AND platform = ?
+               )
+            """,
+            (video_id, platform),
+        )
+        for source_key, name in dict(normalized).items():
+            group_id = _platform_group_id(platform, source_key)
+            connection.execute(
+                """
+                INSERT INTO archive_groups(
+                    group_id, platform, name, source, source_key,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, 'platform', ?, ?, ?)
+                ON CONFLICT(group_id) DO UPDATE SET
+                    name = excluded.name,
+                    updated_at = excluded.updated_at
+                """,
+                (group_id, platform, name, source_key, now, now),
+            )
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO archive_video_groups(
+                    group_id, video_id, created_at
+                ) VALUES (?, ?, ?)
+                """,
+                (group_id, video_id, now),
+            )
 
     @staticmethod
     def _video(row: sqlite3.Row) -> dict[str, Any]:
         value = dict(row)
         value["record"] = _decode(value.pop("record_json", None), {})
+        value.setdefault("groups", [])
         return value
+
+    @staticmethod
+    def _attach_groups(
+        connection: sqlite3.Connection, videos: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        if not videos:
+            return videos
+        by_id = {str(video["video_id"]): video for video in videos}
+        placeholders = ",".join("?" for _ in by_id)
+        rows = connection.execute(
+            f"""
+            SELECT vg.video_id, g.group_id, g.name, g.source, g.source_key
+              FROM archive_video_groups vg
+              JOIN archive_groups g ON g.group_id = vg.group_id
+             WHERE vg.video_id IN ({placeholders})
+             ORDER BY g.source, g.name, g.group_id
+            """,
+            tuple(by_id),
+        ).fetchall()
+        for row in rows:
+            by_id[str(row["video_id"])]["groups"].append(
+                {
+                    "group_id": str(row["group_id"]),
+                    "name": str(row["name"]),
+                    "source": str(row["source"]),
+                    "source_key": row["source_key"],
+                }
+            )
+        return videos
 
     def get_video(self, video_id: str) -> dict[str, Any] | None:
         with self._lock, self._connect() as connection:
             row = connection.execute(
                 "SELECT * FROM archive_videos WHERE video_id = ?", (video_id,)
             ).fetchone()
-        return self._video(row) if row else None
+            videos = [self._video(row)] if row else []
+            self._attach_groups(connection, videos)
+        return videos[0] if videos else None
 
     def list_videos(self, *, limit: int = 5000) -> list[dict[str, Any]]:
         bounded = min(max(int(limit), 1), 100_000)
@@ -497,37 +641,207 @@ class LocalStore:
                 """,
                 (bounded,),
             ).fetchall()
-        return [self._video(row) for row in rows]
+            videos = [self._video(row) for row in rows]
+            self._attach_groups(connection, videos)
+        return videos
 
     def list_video_page(
-        self, *, page: int = 1, page_size: int = 30
+        self, *, page: int = 1, page_size: int = 30, group_id: str | None = None
     ) -> dict[str, Any]:
         requested_page = max(int(page), 1)
         bounded_page_size = min(max(int(page_size), 1), 100)
+        parameters: list[Any] = []
+        where = ""
+        if group_id == "ungrouped":
+            where = (
+                "WHERE NOT EXISTS (SELECT 1 FROM archive_video_groups vg "
+                "WHERE vg.video_id = archive_videos.video_id)"
+            )
+        elif group_id:
+            if not GROUP_ID_RE.fullmatch(group_id):
+                raise ValueError("分组 ID 格式无效")
+            where = (
+                "WHERE EXISTS (SELECT 1 FROM archive_video_groups vg "
+                "WHERE vg.video_id = archive_videos.video_id AND vg.group_id = ?)"
+            )
+            parameters.append(group_id)
         with self._lock, self._connect() as connection:
             total = int(
                 connection.execute(
-                    "SELECT COUNT(*) AS count FROM archive_videos"
+                    f"SELECT COUNT(*) AS count FROM archive_videos {where}",
+                    parameters,
                 ).fetchone()["count"]
             )
             pages = max(1, (total + bounded_page_size - 1) // bounded_page_size)
             current_page = min(requested_page, pages)
             offset = (current_page - 1) * bounded_page_size
             rows = connection.execute(
-                """
+                f"""
                 SELECT * FROM archive_videos
+                {where}
                 ORDER BY last_seen_at DESC, video_id DESC
                 LIMIT ? OFFSET ?
                 """,
-                (bounded_page_size, offset),
+                (*parameters, bounded_page_size, offset),
             ).fetchall()
+            videos = [self._video(row) for row in rows]
+            self._attach_groups(connection, videos)
         return {
-            "items": [self._video(row) for row in rows],
+            "items": videos,
             "total": total,
             "page": current_page,
             "page_size": bounded_page_size,
             "pages": pages,
         }
+
+    def list_groups(self) -> list[dict[str, Any]]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT g.group_id, g.platform, g.name, g.source, g.source_key,
+                       g.created_at, g.updated_at, COUNT(vg.video_id) AS video_count
+                  FROM archive_groups g
+                  LEFT JOIN archive_video_groups vg ON vg.group_id = g.group_id
+                 GROUP BY g.group_id
+                 ORDER BY CASE g.source WHEN 'platform' THEN 0 ELSE 1 END,
+                          g.name, g.group_id
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_group(self, group_id: str) -> dict[str, Any] | None:
+        if not GROUP_ID_RE.fullmatch(group_id):
+            return None
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT g.group_id, g.platform, g.name, g.source, g.source_key,
+                       g.created_at, g.updated_at, COUNT(vg.video_id) AS video_count
+                  FROM archive_groups g
+                  LEFT JOIN archive_video_groups vg ON vg.group_id = g.group_id
+                 WHERE g.group_id = ?
+                 GROUP BY g.group_id
+                """,
+                (group_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def create_group(self, name: str) -> dict[str, Any]:
+        now = utc_now()
+        group_id = f"manual:{uuid.uuid4().hex}"
+        normalized_name = _group_name(name)
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO archive_groups(
+                    group_id, platform, name, source, source_key,
+                    created_at, updated_at
+                ) VALUES (?, 'douyin', ?, 'manual', NULL, ?, ?)
+                """,
+                (group_id, normalized_name, now, now),
+            )
+        group = self.get_group(group_id)
+        assert group is not None
+        return group
+
+    def rename_group(self, group_id: str, name: str) -> dict[str, Any]:
+        if not GROUP_ID_RE.fullmatch(group_id):
+            raise ValueError("分组 ID 格式无效")
+        normalized_name = _group_name(name)
+        with self._lock, self._connect() as connection:
+            changed = connection.execute(
+                """
+                UPDATE archive_groups SET name = ?, updated_at = ?
+                 WHERE group_id = ? AND source = 'manual'
+                """,
+                (normalized_name, utc_now(), group_id),
+            ).rowcount
+        if changed != 1:
+            raise ValueError("只能重命名用户创建的分组")
+        group = self.get_group(group_id)
+        assert group is not None
+        return group
+
+    def delete_group(self, group_id: str) -> None:
+        if not GROUP_ID_RE.fullmatch(group_id):
+            raise ValueError("分组 ID 格式无效")
+        with self._lock, self._connect() as connection:
+            changed = connection.execute(
+                "DELETE FROM archive_groups WHERE group_id = ? AND source = 'manual'",
+                (group_id,),
+            ).rowcount
+        if changed != 1:
+            raise ValueError("只能删除用户创建的分组")
+
+    def _change_group_videos(
+        self, group_id: str, video_ids: Iterable[str], *, add: bool
+    ) -> int:
+        if not GROUP_ID_RE.fullmatch(group_id):
+            raise ValueError("分组 ID 格式无效")
+        normalized_ids = tuple(dict.fromkeys(str(value).strip() for value in video_ids))
+        if not normalized_ids:
+            raise ValueError("请选择至少一个视频")
+        if len(normalized_ids) > 100:
+            raise ValueError("一次最多管理 100 个视频")
+        if any(not VIDEO_ID_RE.fullmatch(value) for value in normalized_ids):
+            raise ValueError("视频 ID 格式无效")
+        with self._lock, self._connect() as connection:
+            group = connection.execute(
+                "SELECT source FROM archive_groups WHERE group_id = ?", (group_id,)
+            ).fetchone()
+            if group is None or group["source"] != "manual":
+                raise ValueError("只能管理用户创建的分组")
+            placeholders = ",".join("?" for _ in normalized_ids)
+            existing = int(
+                connection.execute(
+                    "SELECT COUNT(*) AS count FROM archive_videos "
+                    f"WHERE video_id IN ({placeholders})",
+                    normalized_ids,
+                ).fetchone()["count"]
+            )
+            if existing != len(normalized_ids):
+                raise ValueError("选择中包含不存在的视频")
+            if add:
+                changed = 0
+                now = utc_now()
+                for video_id in normalized_ids:
+                    changed += connection.execute(
+                        """
+                        INSERT OR IGNORE INTO archive_video_groups(
+                            group_id, video_id, created_at
+                        ) VALUES (?, ?, ?)
+                        """,
+                        (group_id, video_id, now),
+                    ).rowcount
+            else:
+                changed = connection.execute(
+                    f"""
+                    DELETE FROM archive_video_groups
+                     WHERE group_id = ? AND video_id IN ({placeholders})
+                    """,
+                    (group_id, *normalized_ids),
+                ).rowcount
+        return changed
+
+    def add_videos_to_group(self, group_id: str, video_ids: Iterable[str]) -> int:
+        return self._change_group_videos(group_id, video_ids, add=True)
+
+    def remove_videos_from_group(self, group_id: str, video_ids: Iterable[str]) -> int:
+        return self._change_group_videos(group_id, video_ids, add=False)
+
+    def prune_empty_platform_groups(self, *, platform: str = "douyin") -> int:
+        with self._lock, self._connect() as connection:
+            return connection.execute(
+                """
+                DELETE FROM archive_groups
+                 WHERE source = 'platform' AND platform = ?
+                   AND NOT EXISTS (
+                       SELECT 1 FROM archive_video_groups vg
+                        WHERE vg.group_id = archive_groups.group_id
+                   )
+                """,
+                (platform,),
+            ).rowcount
 
     def record_comment_export(
         self, video_id: str, *, count: int, exported_at: str | None = None

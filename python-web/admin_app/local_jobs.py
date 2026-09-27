@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import shutil
 import tempfile
 import threading
 import time
@@ -26,7 +27,12 @@ from .local_browser import (
     _identity_from_text,
     authorize_creator,
 )
-from .local_config import LocalSettings
+from .local_config import (
+    COMMENT_EXPORT_DIRECTORY_KEY,
+    LOCAL_PREFERENCES_META_KEY,
+    LocalSettings,
+    prepare_comment_export_directory,
+)
 from .local_store import JobStateConflictError, LocalStore, utc_now
 from .video_archive import (
     VIDEO_ID_RE,
@@ -78,6 +84,21 @@ def _allocate_timestamp_dir(root: Path) -> Path:
             continue
         return target
     raise FileExistsError(f"could not allocate a run directory under {root}")
+
+
+def _copy_file_atomic(source: Path, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent
+    )
+    os.close(descriptor)
+    try:
+        shutil.copyfile(source, temporary_name)
+        os.replace(temporary_name, destination)
+    except Exception:
+        with suppress(FileNotFoundError):
+            os.unlink(temporary_name)
+        raise
 
 
 def _export_summary(result: ExportRunResult) -> dict[str, Any]:
@@ -428,9 +449,13 @@ class LocalJobRunner:
                     "first_seen_at": str(manifest["first_seen"]),
                     "last_seen_at": str(manifest["last_seen"]),
                     "visible_comment_count": visible_comment_count,
+                    "platform_groups": list(record.get("platform_groups") or ()),
+                    "platform_groups_observed": "response" in record.get("sources", ()),
                 }
             )
         self.store.upsert_videos(index_records)
+        if result.listing_complete:
+            self.store.prune_empty_platform_groups(platform="douyin")
         summary = (
             f"发现 {result.discovered_count} 个视频，"
             f"新建 {len(result.created_video_ids)} 个档案"
@@ -501,6 +526,29 @@ class LocalJobRunner:
             self.store.record_comment_export(
                 video_id, count=count, exported_at=exported_at
             )
+        external_file: Path | None = None
+        export_warning = ""
+        preferences = self.store.get_meta(LOCAL_PREFERENCES_META_KEY, {})
+        configured_directory = (
+            preferences.get(COMMENT_EXPORT_DIRECTORY_KEY)
+            if isinstance(preferences, Mapping)
+            else None
+        )
+        if result.batch_path and result.status in {"complete", "partial"}:
+            try:
+                export_root = prepare_comment_export_directory(
+                    str(configured_directory or ""), self.settings
+                )
+                if export_root is not None:
+                    external_file = (
+                        export_root
+                        / video_id
+                        / run_directory.name
+                        / result.batch_path.name
+                    )
+                    _copy_file_atomic(result.batch_path, external_file)
+            except (OSError, ValueError) as exc:
+                export_warning = f"；外部目录写入失败：{exc}"
         payload = {
             "video_id": video_id,
             "status": result.status,
@@ -511,7 +559,14 @@ class LocalJobRunner:
                 if result.batch_path
                 else None
             ),
+            "export_file": str(external_file) if external_file else None,
             "diagnostics": dict(result.diagnostics),
         }
         status = result.status if result.status in {"partial", "blocked"} else "succeeded"
-        return status, result.message, payload
+        message = result.message
+        if external_file:
+            message = f"{message}；已导出到 {external_file.parent}"
+        elif export_warning:
+            status = "partial" if status == "succeeded" else status
+            message = f"{message}{export_warning}"
+        return status, message, payload
