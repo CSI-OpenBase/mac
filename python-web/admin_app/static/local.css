@@ -153,6 +153,14 @@ time { color: #4c555c; font-size: 12px; }
 
 .settings-main { min-height: calc(100vh - 58px); }
 .settings-heading p { margin-top: 6px; color: var(--muted); }
+.tasks-main { min-height: calc(100vh - 58px); }
+.tasks-heading p { margin-top: 6px; color: var(--muted); }
+.task-history { min-height: 260px; }
+.task-history th:nth-child(1) { width: 72px; }
+.task-history th:nth-child(2) { width: 150px; }
+.task-history th:nth-child(3) { width: 190px; }
+.task-history th:nth-child(4) { width: 110px; }
+.task-history th:nth-child(5) { width: 180px; }
 .settings-section { display: grid; grid-template-columns: minmax(220px, 340px) minmax(0, 1fr); gap: 56px; align-items: start; }
 .settings-section-heading p { margin-top: 7px; color: var(--muted); line-height: 1.55; }
 .settings-form { max-width: 760px; }
@@ -230,6 +238,7 @@ time { color: #4c555c; font-size: 12px; }
   .dialog-actions { flex-direction: column-reverse; }
   .dialog-actions .button { width: 100%; }
   table { min-width: 1180px; }
+  .task-history table { min-width: 900px; }
   .pagination { justify-content: space-between; }
   .page-numbers { display: none; }
   .page-position { display: inline; }

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>任务记录 - CSI OpenBase</title>
+  <link rel="icon" type="image/svg+xml" href="/static/brand/favicon.svg">
+  <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
+  <link rel="stylesheet" href="/static/local.css">
+  <script src="/static/vendor/lucide.min.js" defer></script>
+  <script src="/static/local.js" defer></script>
+</head>
+<body data-active-jobs="{{ active_jobs }}" data-latest-job="{{ jobs[0].id if jobs else '' }}">
+  <header class="app-header">
+    <div class="brand"><img class="brand-mark" src="/static/brand/openbase-mark-reversed.svg" width="28" height="28" alt="" aria-hidden="true"><strong>CSI OpenBase</strong><span class="brand-version">v{{ app_version }}</span></div>
+    <div class="header-actions">
+      <div class="header-status"><span class="status-dot {{ 'ok' if authorized else 'idle' }}"></span><span>{{ account.display_name if authorized else '未连接账号' }}</span></div>
+      <a class="header-tool" href="/settings"><i data-lucide="settings" aria-hidden="true"></i><span>设置</span></a>
+      <a class="header-tool" href="/"><i data-lucide="arrow-left" aria-hidden="true"></i><span>返回首页</span></a>
+    </div>
+  </header>
+
+  <main class="tasks-main">
+    <section class="tasks-heading">
+      <h1>任务记录</h1>
+      <p>最近 30 条由用户主动创建的采集任务</p>
+    </section>
+    <section class="task-history history-band" aria-labelledby="task-history-title">
+      <div class="section-heading"><div><h2 id="task-history-title">执行记录</h2><span>{{ jobs|length }} 条</span></div></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>编号</th><th>任务</th><th>视频</th><th>状态</th><th>开始时间（北京时间）</th><th>结果</th></tr></thead>
+          <tbody>
+            {% for job in jobs %}
+            <tr><td>#{{ job.id }}</td><td>{% if job.kind == 'comments' %}{{ '评论完整同步' if job.payload.mode|default('incremental') == 'full' else '评论增量导出' }}{% else %}{{ {'authorize':'账号授权','export':'数据导出','sync_videos':'主页同步','comment_count':'评论数更新'}.get(job.kind, job.kind) }}{% endif %}</td><td><code>{{ job.video_id|default('—', true) }}</code></td><td><span class="job-status status-{{ job.status }}">{{ job.status }}</span></td><td>{{ job.started_at_display if job.started_at else job.created_at_display }}</td><td class="job-message">{{ job.message|default('等待执行', true) }}</td></tr>
+            {% else %}<tr><td colspan="6" class="empty">暂无任务记录</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

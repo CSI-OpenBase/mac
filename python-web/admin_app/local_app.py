@@ -204,11 +204,14 @@ def create_local_app(
     app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="static")
     templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 
-    def page_context(request: Request) -> dict[str, Any]:
-        jobs = [
+    def job_rows(limit: int = 30) -> list[dict[str, Any]]:
+        return [
             _with_time_displays(job, ("created_at", "started_at", "finished_at"))
-            for job in store.list_jobs(limit=30)
+            for job in store.list_jobs(limit=limit)
         ]
+
+    def page_context(request: Request) -> dict[str, Any]:
+        jobs = job_rows(limit=1)
         requested_page = _video_page(request.query_params.get("page"))
         requested_page_size = _video_page_size(
             request.query_params.get("page_size")
@@ -294,6 +297,23 @@ def create_local_app(
     @app.get("/", response_class=HTMLResponse)
     def home(request: Request) -> HTMLResponse:
         return templates.TemplateResponse(request, "local_home.html", page_context(request))
+
+    @app.get("/tasks", response_class=HTMLResponse)
+    def task_history(request: Request) -> HTMLResponse:
+        jobs = job_rows()
+        account = store.get_meta("creator_identity", {})
+        return templates.TemplateResponse(
+            request,
+            "local_tasks.html",
+            {
+                "request": request,
+                "app_version": __version__,
+                "account": account,
+                "authorized": bool(account and account.get("handle")),
+                "active_jobs": store.active_job_count(),
+                "jobs": jobs,
+            },
+        )
 
     @app.get("/settings", response_class=HTMLResponse)
     def local_settings_page(request: Request) -> HTMLResponse:

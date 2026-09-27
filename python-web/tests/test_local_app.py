@@ -118,12 +118,41 @@ def test_local_home_displays_stored_utc_times_in_beijing(
     with TestClient(
         create_local_app(local_settings, store=store, runner=FakeRunner(store))
     ) as client:
-        response = client.get("/")
+        home = client.get("/")
+        tasks = client.get("/tasks")
 
-    assert response.status_code == 200
-    assert "开始时间（北京时间）" in response.text
-    assert response.text.count("2026-09-07 12:00:00") >= 2
-    assert "2026-09-07 18:00:00" in response.text
+    assert home.status_code == 200
+    assert tasks.status_code == 200
+    assert 'href="/tasks"' in home.text
+    assert "开始时间（北京时间）" not in home.text
+    assert "2026-09-07 12:00:00" in home.text
+    assert "2026-09-07 18:00:00" in home.text
+    assert "开始时间（北京时间）" in tasks.text
+    assert "2026-09-07 12:00:00" in tasks.text
+
+
+def test_task_history_has_a_dedicated_page(tmp_path: Path) -> None:
+    local_settings = settings(tmp_path)
+    store = LocalStore(local_settings.database_path)
+    job_id = store.create_job("authorize")["id"]
+
+    with TestClient(
+        create_local_app(local_settings, store=store, runner=FakeRunner(store))
+    ) as client:
+        home = client.get("/")
+        tasks = client.get("/tasks")
+        settings_page = client.get("/settings")
+
+    assert home.status_code == 200
+    assert tasks.status_code == 200
+    assert settings_page.status_code == 200
+    assert 'href="/tasks"' in home.text
+    assert 'href="/tasks"' in settings_page.text
+    assert "最近 30 条由用户主动创建的采集任务" in tasks.text
+    assert f"#{job_id}" in tasks.text
+    assert "暂无任务记录" not in tasks.text
+    assert "开始时间（北京时间）" in tasks.text
+    assert "history-band" not in home.text
 
 
 def test_comment_export_directory_setting_can_be_saved_and_reset(
@@ -657,7 +686,8 @@ def test_comment_route_only_creates_explicit_immediate_job(tmp_path: Path) -> No
         assert "首次获取" in home.text
         assert "尚未导出评论" in home.text
         assert ">获取最新评论</span>" in home.text
-        assert ">导出新增</span>" in home.text
+        assert ">导出评论</span>" in home.text
+        assert ">导出新增</span>" not in home.text
         assert "完整重新同步评论" in home.text
         assert (
             'formaction="/videos/7680023068660346011/comment-count"' in home.text

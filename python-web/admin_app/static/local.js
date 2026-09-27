@@ -114,12 +114,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const active = Number(document.body.dataset.activeJobs || "0");
   const latest = document.body.dataset.latestJob || "";
+  const fetchTaskState = async () => {
+    const response = await fetch("/api/state", { credentials: "same-origin" });
+    if (!response.ok) return null;
+    return response.json();
+  };
+  void fetchTaskState().catch(() => null);
   if (active > 0) {
     const poll = async () => {
       try {
-        const response = await fetch("/api/state", { credentials: "same-origin" });
-        if (!response.ok) return;
-        const state = await response.json();
+        const state = await fetchTaskState();
+        if (!state) return;
         if (state.active_jobs === 0 || String(state.latest_job_id || "") !== latest) {
           window.location.reload();
           return;
