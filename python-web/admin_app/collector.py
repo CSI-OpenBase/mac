@@ -663,7 +663,11 @@ class ResponseAccumulator:
                 )
                 if terminal:
                     warnings.append(message)
-                    if root_id in orphan_roots:
+                    # A closed reply endpoint is authoritative for accessible
+                    # rows. Capturing more than the root's stale counter is not
+                    # missing data; underflow is nonblocking only when this
+                    # thread lost an unavailable parent.
+                    if captured > expected or root_id in orphan_roots:
                         nonblocking_warnings.add(message)
                 else:
                     blockers.append(message)

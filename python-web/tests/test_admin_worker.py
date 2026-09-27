@@ -350,6 +350,21 @@ def test_response_accumulator_marks_terminal_reply_gap_partial() -> None:
     )
 
 
+def test_terminal_reply_overflow_is_complete_with_stale_platform_count() -> None:
+    accumulator = _accumulator(declared_replies=0, include_reply=True)
+
+    assessment = accumulator.assessment()
+
+    assert assessment.status == "complete"
+    assert assessment.blockers == ()
+    assert len(assessment.records) == 2
+    assert any(
+        f"Root {ROOT_ID} declares 0 replies but 1 were captured" in warning
+        and "terminal reply page observed" in warning
+        for warning in assessment.warnings
+    )
+
+
 def test_response_accumulator_blocks_when_reply_pagination_is_open() -> None:
     assessment = _accumulator(
         declared_replies=2, include_reply=False
