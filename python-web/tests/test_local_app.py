@@ -7,6 +7,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 import admin_app.local_app as local_app_module
+import admin_app.local_store as local_store_module
 from admin_app import __version__
 from admin_app.local_app import create_local_app
 from admin_app.local_cleanup import ClearDataResult
@@ -97,6 +98,32 @@ def test_local_home_and_manual_authorization_job(tmp_path: Path) -> None:
         )
         assert response.status_code == 303
     assert runner.calls == [("authorize", {})]
+
+
+def test_local_home_displays_stored_utc_times_in_beijing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    local_settings = settings(tmp_path)
+    store = LocalStore(local_settings.database_path)
+    monkeypatch.setattr(
+        local_store_module, "utc_now", lambda: "2026-09-07T04:00:00Z"
+    )
+    store.create_job("authorize")
+    archive_videos(store, 1)
+    store.set_meta(
+        "last_export",
+        {"finished_at": "2026-09-07T04:00:00Z", "summary": "完成"},
+    )
+
+    with TestClient(
+        create_local_app(local_settings, store=store, runner=FakeRunner(store))
+    ) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert "开始时间（北京时间）" in response.text
+    assert response.text.count("2026-09-07 12:00:00") >= 2
+    assert "2026-09-07 18:00:00" in response.text
 
 
 def test_comment_export_directory_setting_can_be_saved_and_reset(

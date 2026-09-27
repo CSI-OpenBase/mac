@@ -22,6 +22,7 @@ from urllib.parse import parse_qs, urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from .archive_lock import archive_lock
+from .time_utils import as_beijing
 
 
 VIDEO_ARCHIVE_SCHEMA_VERSION = 1
@@ -302,7 +303,9 @@ def _archive_clock(value: datetime | str | None) -> tuple[str, str]:
     instant = _timestamp(value or datetime.now(timezone.utc), required=True)
     assert instant is not None
     parsed = datetime.fromisoformat(instant.replace("Z", "+00:00"))
-    return instant, parsed.strftime("%Y-%m-%d_%H-%M-%S")
+    localized = as_beijing(parsed)
+    assert localized is not None
+    return instant, localized.strftime("%Y-%m-%d_%H-%M-%S")
 
 
 def _count(value: Any) -> int | None:

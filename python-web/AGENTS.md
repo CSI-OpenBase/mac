@@ -39,6 +39,9 @@ persistence, backend APIs, and the local web UI used by the macOS host.
 - Drive manual comment export at the documented fastest-human cadence and stop
   as soon as strict completeness stabilizes. Performance changes must not
   weaken root/reply pagination, relationship, or aggregate-count validation.
+- Keep stored/database timestamps normalized to UTC, but render every
+  user-visible timestamp and generate date-based archive/export directories in
+  fixed Beijing time (`UTC+08:00`), independent of the host system timezone.
 - Keep local video-archive groups separate from comment collection targets.
   Platform groups mirror explicitly observed Douyin column IDs and names;
   manual groups and their memberships must survive later platform syncs.

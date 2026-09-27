@@ -21,6 +21,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .archive_lock import write_collection_state
 from .runtime_paths import default_runtime_root, require_safe_runtime_path
+from .time_utils import as_beijing
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -911,7 +912,9 @@ def collect_video(
         pass
     batches.mkdir(parents=True, exist_ok=True)
     collected_at = utc_now()
-    day = collected_at[:10]
+    localized = as_beijing(collected_at)
+    assert localized is not None
+    day = localized.strftime("%Y-%m-%d")
     batch_name = f"{day}-{video_id}-{trigger}-{uuid.uuid4().hex[:10]}"
     accumulator = ResponseAccumulator(
         video_id=video_id,

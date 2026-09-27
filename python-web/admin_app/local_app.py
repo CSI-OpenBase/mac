@@ -43,6 +43,7 @@ from .local_store import (
     LocalStore,
 )
 from .security import add_flash, csrf_token, pop_flashes, validate_csrf
+from .time_utils import beijing_display
 from .viewmodels import pagination
 
 
@@ -50,6 +51,15 @@ APP_DIR = Path(__file__).resolve().parent
 VIDEO_PAGE_SIZES = (30, 50, 100)
 DEFAULT_VIDEO_PAGE_SIZE = VIDEO_PAGE_SIZES[0]
 MAX_VIDEO_PAGE = 1_000_000
+
+
+def _with_time_displays(
+    item: dict[str, Any], fields: tuple[str, ...]
+) -> dict[str, Any]:
+    value = dict(item)
+    for field in fields:
+        value[f"{field}_display"] = beijing_display(value.get(field))
+    return value
 
 
 def _video_page(value: Any) -> int:
@@ -195,7 +205,10 @@ def create_local_app(
     templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 
     def page_context(request: Request) -> dict[str, Any]:
-        jobs = store.list_jobs(limit=30)
+        jobs = [
+            _with_time_displays(job, ("created_at", "started_at", "finished_at"))
+            for job in store.list_jobs(limit=30)
+        ]
         requested_page = _video_page(request.query_params.get("page"))
         requested_page_size = _video_page_size(
             request.query_params.get("page_size")
@@ -212,8 +225,23 @@ def create_local_app(
             page_size=requested_page_size,
             group_id=requested_group_id,
         )
+        videos = [
+            _with_time_displays(
+                video,
+                (
+                    "first_seen_at",
+                    "last_seen_at",
+                    "last_comment_count_at",
+                    "last_comment_export_at",
+                ),
+            )
+            for video in video_page["items"]
+        ]
         account = store.get_meta("creator_identity", {})
         last_discovery = store.get_meta("last_video_sync", {})
+        last_export = _with_time_displays(
+            store.get_meta("last_export", {}), ("finished_at",)
+        )
         return {
             "request": request,
             "app_version": __version__,
@@ -222,7 +250,7 @@ def create_local_app(
             "account": account,
             "authorized": bool(account and account.get("handle")),
             "jobs": jobs,
-            "videos": video_page["items"],
+            "videos": videos,
             "video_total": video_page["total"],
             "video_page_size": video_page["page_size"],
             "groups": groups,
@@ -246,7 +274,7 @@ def create_local_app(
             ),
             "active_jobs": store.active_job_count(),
             "data_home": str(settings.data_home),
-            "last_export": store.get_meta("last_export", {}),
+            "last_export": last_export,
             "last_discovery": last_discovery,
             "video_synced": last_discovery.get("complete") is True,
         }

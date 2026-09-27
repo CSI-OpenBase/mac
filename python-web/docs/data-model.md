@@ -2,6 +2,8 @@
 
 CSI OpenBase 使用工作区外壳和四类不可变业务快照。JSON Schema 位于 `admin_app/resources/`，MySQL 表定义位于 `mysql-schema.sql`。
 
+所有用户可见时间、导出 manifest 时间及 `<日期时间>` 目录名统一采用北京时间（UTC+08:00）。SQLite/MySQL 内部时间与规范化数据时间戳仍保存为 UTC，避免改变排序、比较和既有历史数据；页面读取时转换为北京时间。
+
 ## 工作区
 
 `workspace.json` 只保存非敏感配置：工作区 slug、展示名、平台、可选主页 URL 和数据库名。MySQL 密码、Cookie 和浏览器会话不进入该文件。

@@ -12,6 +12,8 @@ import tempfile
 from typing import Any, Callable, Iterator, Literal, Mapping, Sequence
 from urllib.parse import quote, urlparse
 
+from .time_utils import as_beijing, beijing_now
+
 
 MANIFEST_SCHEMA = "csi-openbase.douyin.creator-export-manifest"
 MANIFEST_VERSION = 1
@@ -299,13 +301,15 @@ DEFAULT_EXPORT_SPECS: tuple[ExportSpec, ...] = (
 
 
 def _local_now() -> datetime:
-    return datetime.now().astimezone()
+    return beijing_now()
 
 
 def _timestamp(value: datetime) -> str:
     if not isinstance(value, datetime):
         raise TypeError("clock must return datetime instances")
-    return value.isoformat(timespec="seconds")
+    localized = as_beijing(value)
+    assert localized is not None
+    return localized.isoformat(timespec="seconds")
 
 
 def _resolved_url(spec: ExportSpec, variables: Mapping[str, object]) -> str:
@@ -327,7 +331,9 @@ def _resolved_url(spec: ExportSpec, variables: Mapping[str, object]) -> str:
 def _create_run_directory(output_root: Path, started: datetime) -> Path:
     output_root = output_root.expanduser().resolve()
     output_root.mkdir(parents=True, exist_ok=True)
-    base_name = started.strftime("%Y-%m-%d_%H-%M-%S")
+    localized = as_beijing(started)
+    assert localized is not None
+    base_name = localized.strftime("%Y-%m-%d_%H-%M-%S")
     for collision in range(10_000):
         suffix = "" if collision == 0 else f"_{collision:02d}"
         candidate = output_root / f"{base_name}{suffix}"

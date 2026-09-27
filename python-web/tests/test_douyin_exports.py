@@ -257,7 +257,7 @@ def test_failed_entry_does_not_prevent_later_download_and_manifest_is_complete(
     )
 
     assert result.status == "partial"
-    assert result.run_directory.name == "2026-09-07_15-30-25"
+    assert result.run_directory.name == "2026-09-07_23-30-25"
     assert page.visited == [first.url, second.url]
     assert [item.status for item in result.files] == ["failed", "succeeded"]
     exported = result.files[1]
@@ -268,8 +268,8 @@ def test_failed_entry_does_not_prevent_later_download_and_manifest_is_complete(
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
     assert manifest["schema"] == "csi-openbase.douyin.creator-export-manifest"
     assert manifest["version"] == 1
-    assert manifest["started_at"] == "2026-09-07T15:30:25+00:00"
-    assert manifest["finished_at"] == "2026-09-07T15:30:25+00:00"
+    assert manifest["started_at"] == "2026-09-07T23:30:25+08:00"
+    assert manifest["finished_at"] == "2026-09-07T23:30:25+08:00"
     assert manifest["exports"][1]["file"] == "local-name.CSV"
     assert manifest["exports"][1]["size"] == len(content)
     assert manifest["exports"][1]["sha256"] == exported.sha256
@@ -388,8 +388,8 @@ def test_run_directory_is_collision_safe_with_an_injected_clock(
     first = export_creator_data(tmp_path, specs=(), page=page, clock=lambda: FIXED_NOW)
     second = export_creator_data(tmp_path, specs=(), page=page, clock=lambda: FIXED_NOW)
 
-    assert first.run_directory.name == "2026-09-07_15-30-25"
-    assert second.run_directory.name == "2026-09-07_15-30-25_01"
+    assert first.run_directory.name == "2026-09-07_23-30-25"
+    assert second.run_directory.name == "2026-09-07_23-30-25_01"
     assert first.status == second.status == "succeeded"
 
 

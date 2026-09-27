@@ -11,7 +11,6 @@ import threading
 import time
 from contextlib import suppress
 from dataclasses import asdict
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -34,6 +33,7 @@ from .local_config import (
     prepare_comment_export_directory,
 )
 from .local_store import JobStateConflictError, LocalStore, utc_now
+from .time_utils import beijing_slug
 from .video_archive import (
     VIDEO_ID_RE,
     VideoArchiveIdentityError,
@@ -74,7 +74,7 @@ def _relative(path: Path, root: Path) -> str:
 
 def _allocate_timestamp_dir(root: Path) -> Path:
     root.mkdir(parents=True, exist_ok=True)
-    base = datetime.now().astimezone().strftime("%Y-%m-%d_%H-%M-%S")
+    base = beijing_slug()
     for index in range(10_000):
         suffix = "" if index == 0 else f"_{index:02d}"
         target = root / f"{base}{suffix}"

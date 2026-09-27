@@ -380,7 +380,7 @@ def test_archive_paths_and_repeated_sync_preserve_history_and_unseen_videos(
         response_count=2,
     )
 
-    assert first.discovery_dir == works / "discovery" / "2026-09-07_01-02-03"
+    assert first.discovery_dir == works / "discovery" / "2026-09-07_09-02-03"
     assert first.profile_path.exists()
     assert first.videos_path.exists()
     assert first.created_video_ids == (

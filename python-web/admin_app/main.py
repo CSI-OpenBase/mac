@@ -60,6 +60,7 @@ from .services import (
     update_collection_progress,
 )
 from .work_data import WorkDataError
+from .time_utils import beijing_now
 from .viewmodels import (
     STATUS_LABELS,
     decorate_comment,
@@ -605,7 +606,7 @@ def create_app(
             "jobs.html",
             jobs=[decorate_job(item, video_titles=video_title_map(videos)) for item in result["items"]],
             video_options=videos,
-            default_scheduled_for=datetime.now().strftime("%Y-%m-%dT%H:%M"),
+            default_scheduled_for=beijing_now().strftime("%Y-%m-%dT%H:%M"),
             filters=filters,
             stats={"running": raw_stats["running_job_count"], "queued": raw_stats["queued_job_count"]},
             pagination=pager,
