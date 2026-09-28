@@ -30,6 +30,12 @@ VIDEO_ID_RE = re.compile(r"^[0-9]{8,32}$")
 PROFILE_PATH_RE = re.compile(r"^/user/([A-Za-z0-9._~-]{1,256})/?$")
 VIDEO_PATH_RE = re.compile(r"(?:^|/)video/([0-9]{8,32})(?:/|$)")
 WORK_PATH_RE = re.compile(r"^/(video|note|article)/([^/?#]{1,256})/?$")
+CREATOR_HOME_URL = "https://creator.douyin.com/creator-micro/home"
+CONTENT_MANAGEMENT_URL = "https://creator.douyin.com/creator-micro/content/manage"
+CONTENT_MANAGEMENT_WORK_LIST_PATH = "/janus/douyin/creator/pc/work_list"
+CONTENT_MANAGEMENT_PAGE_SETTLE_MS = 1_200
+CONTENT_MANAGEMENT_PAGE_READ_MS = 2_000
+CONTENT_MANAGEMENT_MIN_NO_PROGRESS_ROUNDS = 10
 PROFILE_HANDLE_RE = re.compile(r"抖音号\s*[：:]\s*([^\s]+)")
 PROFILE_WORK_COUNT_RE = re.compile(
     r"(?:^|\s)作品\s*([0-9][0-9,.]*(?:万|亿|[wW])?)"
@@ -144,7 +150,7 @@ class ProfileCapture:
 
 @dataclass(frozen=True, slots=True)
 class VideoArchiveResult:
-    """Paths and counters produced by one profile synchronization."""
+    """Paths and counters produced by one work-list synchronization."""
 
     profile_url: str
     discovered_at: str
@@ -205,6 +211,15 @@ def validate_douyin_profile_url(value: str) -> str:
     return urlunsplit(
         ("https", parsed.hostname.lower(), parsed.path.rstrip("/"), "", "")
     )
+
+
+def validate_video_archive_source_url(value: str) -> str:
+    """Accept the creator content manager and legacy public-profile sources."""
+
+    text = str(value or "").strip()
+    if text == CONTENT_MANAGEMENT_URL:
+        return text
+    return validate_douyin_profile_url(text)
 
 
 def _profile_handle_from_text(value: str) -> str:
@@ -580,6 +595,52 @@ def extract_videos_from_response(
     return _merge_records(records)
 
 
+def extract_content_management_page(
+    payload: Any,
+    *,
+    observed_at: datetime | str | None = None,
+) -> tuple[list[dict[str, Any]], int | None, bool | None]:
+    """Read one sanitized page from the creator content-management response."""
+
+    if not isinstance(payload, Mapping):
+        return [], None, None
+    raw_items = payload.get("aweme_list")
+    if not isinstance(raw_items, list):
+        return [], None, None
+    observed, _ = _archive_clock(observed_at)
+    records: list[dict[str, Any]] = []
+    for raw in raw_items[:MAX_VIDEO_RECORDS]:
+        if not isinstance(raw, Mapping):
+            continue
+        try:
+            records.append(
+                _record_from_mapping(
+                    raw,
+                    observed_at=observed,
+                    source="response",
+                )
+            )
+        except VideoArchiveError:
+            continue
+    total = _count(payload.get("total"))
+    raw_has_more = payload.get("has_more")
+    has_more = raw_has_more if isinstance(raw_has_more, bool) else None
+    return _merge_records(records), total, has_more
+
+
+def _content_management_read_delay_ms(
+    new_record_count: int, *, scroll_pause_ms: int
+) -> int:
+    """Allow a deliberate scan of each newly loaded content-management page."""
+
+    reading_delay = (
+        CONTENT_MANAGEMENT_PAGE_READ_MS
+        if int(new_record_count) > 0
+        else CONTENT_MANAGEMENT_PAGE_SETTLE_MS
+    )
+    return max(int(scroll_pause_ms), reading_delay)
+
+
 def extract_video_comment_count(payload: Any, *, video_id: str) -> int | None:
     """Return one video's visible comment total without materializing comments."""
 
@@ -834,7 +895,7 @@ def archive_profile_videos(
 ) -> VideoArchiveResult:
     """Atomically archive one sanitized profile discovery."""
 
-    canonical_profile = validate_douyin_profile_url(profile_url)
+    canonical_profile = validate_video_archive_source_url(profile_url)
     if scroll_count < 0 or response_count < 0:
         raise VideoArchiveError("capture counters cannot be negative")
     if declared_work_count is not None and declared_work_count < 0:
@@ -1116,6 +1177,17 @@ def _relevant_response_url(value: str) -> bool:
     )
 
 
+def _content_management_response_url(value: str) -> bool:
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return False
+    return (
+        (parsed.hostname or "").rstrip(".").lower() == "creator.douyin.com"
+        and parsed.path == CONTENT_MANAGEMENT_WORK_LIST_PATH
+    )
+
+
 def _comment_content_url(value: str) -> bool:
     try:
         parsed = urlsplit(value)
@@ -1246,6 +1318,170 @@ def fetch_video_comment_count(
         finally:
             context.close()
     raise VideoArchiveError("未能读取该视频的最新评论数，请稍后重试")
+
+
+def _capture_content_management_with_playwright(
+    *,
+    profile_url: str,
+    browser_profile_dir: Path,
+    observed_at: str,
+    max_scrolls: int,
+    stable_rounds: int,
+    scroll_pause_ms: int,
+    expected_handle: str | None = None,
+) -> ProfileCapture:
+    """Capture the signed-in creator's complete content-management work list."""
+
+    if profile_url != CONTENT_MANAGEMENT_URL:
+        raise VideoArchiveError("content-management capture requires its canonical URL")
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as exc:  # pragma: no cover - installation failure
+        raise VideoArchiveError("Playwright and Chromium are required") from exc
+
+    profile = browser_profile_dir.expanduser().resolve()
+    profile.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        profile.chmod(0o700)
+    except OSError:
+        pass
+
+    records: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    response_count = 0
+    scroll_count = 0
+    owner_handle = ""
+    declared_count: int | None = None
+    has_more: bool | None = None
+
+    with sync_playwright() as playwright:
+        context = _launch_persistent_context(playwright, profile)
+        try:
+            page = context.pages[0] if context.pages else context.new_page()
+            page.goto(CREATOR_HOME_URL, wait_until="domcontentloaded", timeout=45_000)
+            identity_deadline = time.monotonic() + 30
+            while time.monotonic() < identity_deadline:
+                current_url = str(getattr(page, "url", "")).casefold()
+                if any(
+                    token in current_url for token in ("passport", "captcha", "verify")
+                ):
+                    raise VideoArchiveIdentityError("需要在打开的浏览器中完成抖音登录或验证")
+                try:
+                    body_text = page.locator("body").inner_text(timeout=5_000)
+                    owner_handle = _profile_handle_from_text(body_text)
+                except Exception:
+                    owner_handle = ""
+                if owner_handle:
+                    break
+                page.wait_for_timeout(500)
+            if not owner_handle:
+                raise VideoArchiveIdentityError("无法确认创作者中心账号，请重新授权后重试")
+            if expected_handle and owner_handle.casefold() != expected_handle.casefold():
+                raise VideoArchiveIdentityError("创作者中心账号与当前工作目录授权账号不一致")
+
+            def handle_response(response: Any) -> None:
+                nonlocal response_count, declared_count, has_more
+                if not _content_management_response_url(str(response.url)):
+                    return
+                try:
+                    page_records, total, page_has_more = extract_content_management_page(
+                        response.json(), observed_at=observed_at
+                    )
+                except Exception as exc:
+                    warnings.append(
+                        "a content-management response could not be parsed "
+                        f"({type(exc).__name__})"
+                    )
+                    return
+                response_count += 1
+                records.extend(page_records)
+                if total is not None:
+                    declared_count = max(declared_count or 0, total)
+                if page_has_more is not None:
+                    has_more = page_has_more
+
+            page.on("response", handle_response)
+            page.goto(profile_url, wait_until="domcontentloaded", timeout=45_000)
+            response_deadline = time.monotonic() + 45
+            while response_count == 0 and time.monotonic() < response_deadline:
+                current_url = str(getattr(page, "url", "")).casefold()
+                if any(
+                    token in current_url for token in ("passport", "captcha", "verify")
+                ):
+                    raise VideoArchiveIdentityError("需要在打开的浏览器中完成抖音登录或验证")
+                page.wait_for_timeout(500)
+            if response_count == 0:
+                raise VideoArchiveError("创作者中心作品列表未完成加载")
+
+            previous_count = 0
+            unchanged_rounds = 0
+            for index in range(max_scrolls + 1):
+                captured_count = len(_merge_records(records))
+                new_record_count = max(captured_count - previous_count, 0)
+                if new_record_count:
+                    unchanged_rounds = 0
+                    page.wait_for_timeout(
+                        _content_management_read_delay_ms(
+                            new_record_count,
+                            scroll_pause_ms=scroll_pause_ms,
+                        )
+                    )
+                else:
+                    unchanged_rounds += 1
+                previous_count = captured_count
+                if declared_count is not None and captured_count >= declared_count:
+                    break
+                if has_more is False:
+                    break
+                no_progress_limit = (
+                    max(stable_rounds, CONTENT_MANAGEMENT_MIN_NO_PROGRESS_ROUNDS)
+                    if has_more is True
+                    else stable_rounds
+                )
+                if unchanged_rounds >= no_progress_limit or index >= max_scrolls:
+                    break
+                try:
+                    viewport_height = int(
+                        page.evaluate("() => window.innerHeight") or 960
+                    )
+                    page.mouse.move(720, max(100, viewport_height - 120))
+                    page.mouse.wheel(0, max(600, int(viewport_height * 0.9)))
+                    scroll_count += 1
+                    page.wait_for_timeout(
+                        max(scroll_pause_ms, CONTENT_MANAGEMENT_PAGE_SETTLE_MS)
+                    )
+                except Exception as exc:
+                    warnings.append(
+                        "content-management scrolling stopped "
+                        f"({type(exc).__name__})"
+                    )
+                    break
+        finally:
+            context.close()
+
+    merged_records = tuple(_merge_records(records))
+    captured_count = len(merged_records)
+    listing_complete = (
+        captured_count >= declared_count
+        if declared_count is not None
+        else has_more is False
+    )
+    if not listing_complete:
+        declared_label = str(declared_count) if declared_count is not None else "unknown"
+        warnings.append(
+            "content-management capture was incomplete "
+            f"(declared={declared_label}, captured={captured_count})"
+        )
+    return ProfileCapture(
+        records=merged_records,
+        scroll_count=scroll_count,
+        response_count=response_count,
+        warnings=tuple(dict.fromkeys(warnings)),
+        owner_handle=owner_handle,
+        declared_work_count=declared_count,
+        captured_work_count=captured_count,
+        listing_complete=listing_complete,
+    )
 
 
 def _capture_with_playwright(
@@ -1469,13 +1705,13 @@ def sync_profile_videos(
     cover_fetcher: CoverFetcher | None = None,
     expected_handle: str | None = None,
 ) -> VideoArchiveResult:
-    """Capture a Douyin profile with a headed browser and archive the result.
+    """Capture a Douyin work list with a headed browser and archive the result.
 
     ``capture`` is injectable so parsing and archival can be exercised without
     launching a browser in unit tests.
     """
 
-    canonical_profile = validate_douyin_profile_url(profile_url)
+    canonical_profile = validate_video_archive_source_url(profile_url)
     if not 1 <= max_scrolls <= 500:
         raise VideoArchiveError("max_scrolls must be between 1 and 500")
     if not 1 <= stable_rounds <= 20:
@@ -1483,10 +1719,14 @@ def sync_profile_videos(
     if not 100 <= scroll_pause_ms <= 10_000:
         raise VideoArchiveError("scroll_pause_ms must be between 100 and 10000")
     discovered_at, _ = _archive_clock(observed_at)
-    capture_function = capture or _capture_with_playwright
+    capture_function = capture or (
+        _capture_content_management_with_playwright
+        if canonical_profile == CONTENT_MANAGEMENT_URL
+        else _capture_with_playwright
+    )
     if capture is None and browser_profile_dir is None:
         raise VideoArchiveError(
-            "browser_profile_dir is required for Playwright profile discovery"
+            "browser_profile_dir is required for Playwright work discovery"
         )
     profile_dir = browser_profile_dir or works_dir / ".browser-profile"
     captured = capture_function(
@@ -1504,11 +1744,11 @@ def sync_profile_videos(
     actual = str(captured.owner_handle or "").strip()
     if expected and not actual:
         raise VideoArchiveIdentityError(
-            "无法确认个人主页账号，请在打开的浏览器中登录后重试"
+            "无法确认创作者账号，请在打开的浏览器中登录后重试"
         )
     if expected and actual.casefold() != expected.casefold():
         raise VideoArchiveIdentityError(
-            "个人主页账号与当前工作目录授权的创作者不一致"
+            "创作者账号与当前工作目录授权的创作者不一致"
         )
     return archive_profile_videos(
         profile_url=canonical_profile,

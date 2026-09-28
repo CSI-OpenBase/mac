@@ -32,7 +32,7 @@
           <thead><tr><th>编号</th><th>任务</th><th>视频</th><th>状态</th><th>开始时间（北京时间）</th><th>结果</th></tr></thead>
           <tbody>
             {% for job in jobs %}
-            <tr><td>#{{ job.id }}</td><td>{% if job.kind == 'comments' %}{{ '评论完整同步' if job.payload.mode|default('incremental') == 'full' else '评论增量导出' }}{% else %}{{ {'authorize':'账号授权','export':'数据导出','sync_videos':'主页同步','comment_count':'评论数更新'}.get(job.kind, job.kind) }}{% endif %}</td><td>{% if job.video_id %}<a class="task-video-link" href="/videos/{{ job.video_id }}" title="查看对应作品"><code>{{ job.video_id }}</code></a>{% else %}<code>—</code>{% endif %}</td><td><span class="job-status status-{{ job.status }}">{{ job.status }}</span></td><td>{{ job.started_at_display if job.started_at else job.created_at_display }}</td><td class="job-message">{{ job.message|default('等待执行', true) }}</td></tr>
+            <tr><td>#{{ job.id }}</td><td>{% if job.kind == 'comments' %}{{ '评论完整同步' if job.payload.mode|default('incremental') == 'full' else '评论增量导出' }}{% else %}{{ {'authorize':'账号授权','export':'数据导出','sync_videos':'作品档案同步','comment_count':'评论数更新'}.get(job.kind, job.kind) }}{% endif %}</td><td>{% if job.video_id %}<a class="task-video-link" href="/videos/{{ job.video_id }}" title="查看对应作品"><code>{{ job.video_id }}</code></a>{% else %}<code>—</code>{% endif %}</td><td><span class="job-status status-{{ job.status }}">{{ job.status }}</span></td><td>{{ job.started_at_display if job.started_at else job.created_at_display }}</td><td class="job-message">{{ job.message|default('等待执行', true) }}</td></tr>
             {% else %}<tr><td colspan="6" class="empty">暂无任务记录</td></tr>{% endfor %}
           </tbody>
         </table>

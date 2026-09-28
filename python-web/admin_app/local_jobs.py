@@ -35,6 +35,7 @@ from .local_config import (
 from .local_store import JobStateConflictError, LocalStore, utc_now
 from .time_utils import beijing_slug
 from .video_archive import (
+    CONTENT_MANAGEMENT_URL,
     VIDEO_ID_RE,
     VideoArchiveIdentityError,
     VideoArchiveResult,
@@ -611,7 +612,7 @@ class LocalJobRunner:
             expected_handle=expected,
         )
         result: VideoArchiveResult = self.video_sync(
-            profile_url="https://www.douyin.com/user/self",
+            profile_url=CONTENT_MANAGEMENT_URL,
             works_dir=self.settings.works_dir,
             browser_profile_dir=self.settings.browser_profile_dir,
             download_covers=True,

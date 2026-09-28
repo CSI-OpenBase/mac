@@ -6,22 +6,27 @@ from pathlib import Path
 import pytest
 
 from admin_app.video_archive import (
+    CONTENT_MANAGEMENT_URL,
     ProfileCapture,
     VideoArchiveError,
     VideoArchiveIdentityError,
     _declared_profile_work_count,
     _comment_count_from_dom_values,
     _comment_content_url,
+    _content_management_read_delay_ms,
+    _content_management_response_url,
     _launch_persistent_context,
     _merge_records,
     _profile_listing_complete,
     _work_key_from_url,
     archive_profile_videos,
+    extract_content_management_page,
     extract_videos_from_dom,
     extract_videos_from_response,
     extract_video_comment_count,
     sync_profile_videos,
     validate_douyin_profile_url,
+    validate_video_archive_source_url,
 )
 
 
@@ -159,6 +164,47 @@ def test_profile_url_validation_rejects_non_profile_and_host_confusion(
         validate_douyin_profile_url(value)
 
 
+def test_content_management_source_url_is_exact() -> None:
+    assert validate_video_archive_source_url(CONTENT_MANAGEMENT_URL) == (
+        CONTENT_MANAGEMENT_URL
+    )
+    with pytest.raises(VideoArchiveError, match="profile_url"):
+        validate_video_archive_source_url(f"{CONTENT_MANAGEMENT_URL}?status=1")
+
+
+def test_content_management_response_url_is_strict() -> None:
+    assert _content_management_response_url(
+        "https://creator.douyin.com/janus/douyin/creator/pc/work_list?count=12"
+    )
+    assert not _content_management_response_url(
+        "https://www.douyin.com/janus/douyin/creator/pc/work_list"
+    )
+    assert not _content_management_response_url(
+        "https://creator.douyin.com/janus/douyin/creator/pc/work_detail"
+    )
+
+
+@pytest.mark.parametrize(
+    ("new_record_count", "scroll_pause_ms", "expected"),
+    [
+        (0, 1_000, 1_200),
+        (12, 1_000, 2_000),
+        (100, 1_000, 2_000),
+        (1, 2_000, 2_000),
+    ],
+)
+def test_content_management_page_delay_allows_deliberate_reading(
+    new_record_count: int, scroll_pause_ms: int, expected: int
+) -> None:
+    assert (
+        _content_management_read_delay_ms(
+            new_record_count,
+            scroll_pause_ms=scroll_pause_ms,
+        )
+        == expected
+    )
+
+
 def test_response_parser_extracts_video_data_without_author_identity() -> None:
     payload = {
         "aweme_list": [
@@ -216,6 +262,44 @@ def test_response_parser_extracts_video_data_without_author_identity() -> None:
     ]
     serialized = json.dumps(videos, ensure_ascii=False)
     assert "不得存储的昵称" not in serialized
+    assert "private-user-id" not in serialized
+
+
+def test_content_management_page_extracts_publish_time_and_pagination() -> None:
+    records, total, has_more = extract_content_management_page(
+        {
+            "aweme_list": [
+                {
+                    "aweme_id": "7390123456789012345",
+                    "desc": "内容管理作品",
+                    "create_time": 1_725_667_200,
+                    "author": {
+                        "nickname": "不得保存的作者",
+                        "uid": "private-user-id",
+                    },
+                    "statistics": {
+                        "play_count": 1200,
+                        "comment_count": 8,
+                    },
+                    "video": {},
+                }
+            ],
+            "total": 144,
+            "has_more": True,
+            "max_cursor": 1_725_667_200_000,
+        },
+        observed_at=FIRST_SEEN,
+    )
+
+    assert total == 144
+    assert has_more is True
+    assert records[0]["published_at"] == "2024-09-07T00:00:00Z"
+    assert records[0]["visible_metrics"] == {
+        "view_count": 1200,
+        "comment_count": 8,
+    }
+    serialized = json.dumps(records, ensure_ascii=False)
+    assert "不得保存的作者" not in serialized
     assert "private-user-id" not in serialized
 
 
@@ -534,7 +618,7 @@ def test_sync_uses_injected_capture_and_returns_dataclass(tmp_path: Path) -> Non
         )
 
     result = sync_profile_videos(
-        profile_url=f"{PROFILE_URL}?tracking=discarded",
+        profile_url=CONTENT_MANAGEMENT_URL,
         works_dir=tmp_path / "works",
         observed_at=FIRST_SEEN,
         capture=capture,
@@ -543,7 +627,7 @@ def test_sync_uses_injected_capture_and_returns_dataclass(tmp_path: Path) -> Non
 
     assert result.discovered_count == 1
     assert result.warnings == ("one recoverable warning",)
-    assert captured_arguments["profile_url"] == PROFILE_URL
+    assert captured_arguments["profile_url"] == CONTENT_MANAGEMENT_URL
     profile = json.loads(result.profile_path.read_text(encoding="utf-8"))
     assert profile["scroll_count"] == 7
     assert profile["response_count"] == 4

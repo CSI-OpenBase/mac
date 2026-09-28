@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import re
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
 from fastapi.testclient import TestClient
+from openpyxl import load_workbook
 
 import admin_app.local_app as local_app_module
 import admin_app.local_store as local_store_module
@@ -253,8 +255,12 @@ def test_video_archive_page_lists_synced_metadata_and_serves_safe_cover(
     assert "查看视频档案" in home.text
     assert archive.status_code == 200
     assert "31 个已同步作品" in archive.text
+    assert 'action="/video-archive/export"' in archive.text
+    assert archive.text.count("必选") == 3
+    assert "<th>视频</th><th>标题</th><th>描述</th>" in archive.text
+    assert 'class="video-catalog-title"' in archive.text
     assert "完整档案作品" in archive.text
-    assert "完整作品描述" in archive.text
+    assert '<td class="video-catalog-description">完整作品描述</td>' in archive.text
     assert "2026-09-01 08:30:00" in archive.text
     assert "档案栏目" in archive.text
     assert "12,345" in archive.text
@@ -270,6 +276,101 @@ def test_video_archive_page_lists_synced_metadata_and_serves_safe_cover(
     assert cover.headers["content-type"] == "image/jpeg"
     assert cover.content == b"\xff\xd8\xff\xd9"
     assert invalid_cover.status_code == 404
+
+
+def test_video_archive_export_enforces_required_columns_and_selected_fields(
+    tmp_path: Path,
+) -> None:
+    local_settings = settings(tmp_path)
+    store = LocalStore(local_settings.database_path)
+    video_id = "7700000000000000001"
+    video_directory = local_settings.videos_dir / "douyin" / video_id
+    metadata_path = video_directory / "metadata" / "latest.json"
+    metadata_path.parent.mkdir(parents=True)
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "desc": "单独导出的描述",
+                "published_at": "2026-09-01T00:30:00Z",
+                "observed_at": "2026-09-07T04:00:00Z",
+                "visible_metrics": {"view_count": 12_345},
+                "sources": ["response"],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (video_directory / "manifest.json").write_text(
+        json.dumps({"latest_metadata": "metadata/latest.json"}),
+        encoding="utf-8",
+    )
+    store.upsert_videos(
+        [
+            {
+                "video_id": video_id,
+                "title": "=作为文本的标题",
+                "video_url": f"https://www.douyin.com/video/{video_id}",
+                "manifest_path": (
+                    f"works/videos/douyin/{video_id}/manifest.json"
+                ),
+                "first_seen_at": "2026-09-07T01:00:00Z",
+                "last_seen_at": "2026-09-07T02:00:00Z",
+                "platform_groups_observed": True,
+                "platform_groups": [{"id": "column-1", "name": "档案栏目"}],
+            }
+        ]
+    )
+
+    with TestClient(
+        create_local_app(local_settings, store=store, runner=FakeRunner(store))
+    ) as client:
+        token = csrf(client)
+        exported = client.post(
+            "/video-archive/export",
+            data={
+                "csrf_token": token,
+                "columns": ["description", "groups", "view_count"],
+            },
+        )
+        invalid = client.post(
+            "/video-archive/export",
+            data={"csrf_token": token, "columns": ["author"]},
+        )
+        missing_csrf = client.post(
+            "/video-archive/export",
+            data={"columns": ["description"]},
+        )
+
+    assert exported.status_code == 200
+    assert exported.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert re.fullmatch(
+        r'attachment; filename="csi-openbase-video-archive-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.xlsx"',
+        exported.headers["content-disposition"],
+    )
+    workbook = load_workbook(BytesIO(exported.content), read_only=True)
+    rows = list(workbook["视频档案"].iter_rows(values_only=False))
+    assert [cell.value for cell in rows[0]] == [
+        "视频 ID",
+        "标题",
+        "发布时间",
+        "描述",
+        "分组",
+        "播放数",
+    ]
+    assert [cell.value for cell in rows[1]] == [
+        video_id,
+        "=作为文本的标题",
+        "2026-09-01 08:30:00",
+        "单独导出的描述",
+        "档案栏目",
+        12_345,
+    ]
+    assert rows[1][0].data_type == "s"
+    assert rows[1][1].data_type == "s"
+    assert invalid.status_code == 400
+    assert missing_csrf.status_code == 403
 
 
 def test_local_home_marks_comment_export_status_per_video(tmp_path: Path) -> None:

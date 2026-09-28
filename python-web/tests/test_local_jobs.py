@@ -157,7 +157,9 @@ def test_video_sync_indexes_idempotent_file_archive(tmp_path: Path) -> None:
     def fake_sync(**kwargs: Any):
         nonlocal calls
         calls += 1
-        assert kwargs["profile_url"] == "https://www.douyin.com/user/self"
+        assert kwargs["profile_url"] == (
+            "https://creator.douyin.com/creator-micro/content/manage"
+        )
         assert kwargs["expected_handle"] == "creator-handle"
         record: dict[str, Any] = {
             "video_id": VIDEO_ID,

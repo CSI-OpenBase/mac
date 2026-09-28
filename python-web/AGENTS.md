@@ -40,7 +40,7 @@ its imported commit in `python-web/UPSTREAM.md`.
 - Keep homepage-visible comments and exported comments as separate measures.
   `visible_comment_count`, `last_comment_count_at`, and `comment_count_delta`
   describe the latest count-only platform observation, whether it came from
-  profile synchronization or the explicit refresh action. `comment_count` and
+  creator content-management synchronization or the explicit refresh action. `comment_count` and
   `last_comment_export_at` describe the user's latest manual content export.
   Count-only refreshes must never request, persist, or clear comment content.
 - Drive manual comment export at the documented 130% of average-human cadence
@@ -59,6 +59,16 @@ its imported commit in `python-web/UPSTREAM.md`.
   Platform groups mirror explicitly observed Douyin column IDs and names;
   manual groups and their memberships must survive later platform syncs.
   Removing a manual group must never remove a video archive.
+- Keep the platform's work title and description as distinct archive fields and
+  distinct columns in the detailed video-archive view.
+- Video-archive spreadsheet exports must always include video ID, title, and
+  Beijing-time publication time. Optional columns stay allowlisted, exports
+  cover the complete archive rather than the visible page, long IDs remain
+  text, and untrusted text must never become a spreadsheet formula.
+- Load creator content-management pages at a deliberate human-reading cadence.
+  While the platform reports `has_more`, do not treat a short pause between
+  pages as completion; stop only at the declared total, a terminal page, or the
+  bounded no-progress safety limit.
 - Keep the optional comment export directory in the preserved
   `local_preferences` metadata. The canonical internal batch remains under the
   managed video archive; a configured external directory receives an atomic,

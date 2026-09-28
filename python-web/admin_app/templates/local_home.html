@@ -58,7 +58,7 @@
         <div><span class="step">02</span><h2>视频档案</h2><p>{{ last_discovery.summary|default('尚未同步') }}</p></div>
         <span class="action-buttons">
           <button type="submit" class="button button-primary" {% if not authorized %}disabled{% endif %}>
-            <i data-lucide="folder-sync" aria-hidden="true"></i><span>同步个人主页</span>
+            <i data-lucide="folder-sync" aria-hidden="true"></i><span>同步作品档案</span>
           </button>
           <a class="button button-secondary" href="/video-archive"><i data-lucide="list-video" aria-hidden="true"></i><span>查看视频档案</span></a>
         </span>
