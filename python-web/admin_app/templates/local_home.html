@@ -140,7 +140,7 @@
             <thead><tr><th class="select-cell"><input type="checkbox" data-select-all aria-label="选择本页全部视频" {% if not videos %}disabled{% endif %}></th><th>视频</th><th>分组</th><th>首次发现</th><th>最近同步</th><th>评论数</th><th class="action-cell">操作</th></tr></thead>
             <tbody>
               {% for video in videos %}
-              <tr>
+              <tr id="video-{{ video.video_id }}">
                 <td class="select-cell"><input type="checkbox" name="video_id" value="{{ video.video_id }}" aria-label="选择 {{ video.title }}"></td>
                 <td><a href="{{ video.video_url }}" target="_blank" rel="noopener noreferrer" class="video-title">{{ video.title }}</a><code>{{ video.video_id }}</code></td>
                 <td><div class="video-group-tags">{% for group in video.groups %}<a href="/?page_size={{ video_page_size }}&amp;group_id={{ group.group_id }}#video-archive" class="group-tag group-tag-{{ group.source }}">{{ group.name }}</a>{% else %}<span class="cell-note">未分组</span>{% endfor %}</div></td>

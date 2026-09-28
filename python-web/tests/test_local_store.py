@@ -78,6 +78,9 @@ def test_video_pages_report_total_and_keep_stable_order(tmp_path: Path) -> None:
     assert store.list_videos(limit=100_000) == (
         first["items"] + second["items"] + last["items"]
     )
+    assert store.video_page_number(str(records[-1]["video_id"]), page_size=30) == 1
+    assert store.video_page_number(str(records[0]["video_id"]), page_size=30) == 3
+    assert store.video_page_number("12345678", page_size=30) is None
 
 
 def test_empty_video_page_stays_on_page_one(tmp_path: Path) -> None:

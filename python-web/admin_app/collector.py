@@ -2,9 +2,9 @@
 
 Only normalized, anonymous comment records are written. Raw HTTP responses are
 never persisted, and browser state stays in the repository's ignored runtime
-directory. A capture is reported as complete when structural counts match,
-Douyin's aggregate total is within the allowed variance, or a closed reply
-thread differs only because platform-hidden parent replies created orphans.
+directory. A capture is reported as complete when structural pagination and
+relationships close, even if Douyin's aggregate total includes inaccessible
+records or a closed reply thread lost platform-hidden parent replies.
 """
 
 from __future__ import annotations
@@ -149,6 +149,17 @@ def _is_orphan_reply_warning(value: str) -> bool:
     return value.startswith("Reply ") and UNAVAILABLE_PARENT_WARNING in value
 
 
+def _reported_total_warning_counts(value: str) -> tuple[int, int] | None:
+    match = re.fullmatch(
+        r"Douyin reported total (\d+), but the capture has \d+ roots and "
+        r"(\d+) total records",
+        value,
+    )
+    if match is None:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
 def _capture_message(
     status: str,
     record_count: int,
@@ -157,10 +168,26 @@ def _capture_message(
     warnings: Sequence[str],
 ) -> str:
     orphan_count = sum(_is_orphan_reply_warning(value) for value in warnings)
-    if status == "complete" and orphan_count:
-        return (
-            f"采集完成：已保存 {record_count} 条匿名评论及回复；"
-            f"父评论可能已删除，发现 {orphan_count} 条孤儿评论，已跳过"
+    notices: list[str] = []
+    if orphan_count:
+        notices.append(f"父评论可能已删除，发现 {orphan_count} 条孤儿评论，已跳过")
+    reported_gap = next(
+        (
+            counts
+            for warning in warnings
+            if (counts := _reported_total_warning_counts(warning)) is not None
+        ),
+        None,
+    )
+    if reported_gap is not None:
+        reported, accessible = reported_gap
+        notices.append(
+            f"平台显示 {reported} 条，当前可访问 {accessible} 条，"
+            "可能存在已删除、审核隐藏或暂不可见评论"
+        )
+    if status == "complete" and notices:
+        return f"采集完成：已保存 {record_count} 条匿名评论及回复；" + "；".join(
+            notices
         )
     if status == "complete":
         return f"Capture complete: {record_count} anonymous comments and replies"
@@ -689,6 +716,10 @@ class ResponseAccumulator:
             )
             if self._root_terminal_seen and reply_pagination_closed:
                 warnings.append(message)
+                # Closed structural pagination is authoritative for currently
+                # accessible records; the aggregate may include hidden,
+                # deleted, moderated, or cached comments.
+                nonblocking_warnings.add(message)
             else:
                 blockers.append(message)
 

@@ -38,6 +38,7 @@ from .local_config import (
 from .local_lock import WorkspaceLease
 from .local_store import (
     GROUP_ID_RE,
+    VIDEO_ID_RE,
     ActiveCommentJobError,
     ActiveLocalJobsError,
     LocalStore,
@@ -297,6 +298,17 @@ def create_local_app(
     @app.get("/", response_class=HTMLResponse)
     def home(request: Request) -> HTMLResponse:
         return templates.TemplateResponse(request, "local_home.html", page_context(request))
+
+    @app.get("/videos/{video_id}")
+    def focus_video(request: Request, video_id: str) -> RedirectResponse:
+        if not VIDEO_ID_RE.fullmatch(video_id):
+            raise HTTPException(status_code=404)
+        page = store.video_page_number(video_id, page_size=DEFAULT_VIDEO_PAGE_SIZE)
+        if page is None:
+            add_flash(request, "未找到对应的视频档案", "warning")
+            return _redirect("/#video-archive")
+        query = urlencode({"page": page, "page_size": DEFAULT_VIDEO_PAGE_SIZE})
+        return _redirect(f"/?{query}#video-{video_id}")
 
     @app.get("/tasks", response_class=HTMLResponse)
     def task_history(request: Request) -> HTMLResponse:

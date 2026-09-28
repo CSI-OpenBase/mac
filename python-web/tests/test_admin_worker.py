@@ -247,11 +247,11 @@ def test_response_accumulator_accepts_five_percent_total_variance() -> None:
     assert diagnostics["reported_total_within_tolerance"] is True
 
 
-def test_response_accumulator_keeps_material_total_gap_partial() -> None:
+def test_response_accumulator_completes_closed_structural_total_gap_with_notice() -> None:
     accumulator = _accumulator_with_counts(
-        reported_total=77,
-        root_count=27,
-        reply_count=45,
+        reported_total=40,
+        root_count=12,
+        reply_count=21,
     )
 
     assessment = accumulator.assessment()
@@ -259,9 +259,19 @@ def test_response_accumulator_keeps_material_total_gap_partial() -> None:
         assessment.records, warnings=assessment.warnings
     )
 
-    assert assessment.status == "partial"
-    assert any("Douyin reported total 77" in warning for warning in assessment.warnings)
+    assert assessment.status == "complete"
+    assert any("Douyin reported total 40" in warning for warning in assessment.warnings)
     assert diagnostics["reported_total_within_tolerance"] is False
+    assert collector_module._capture_message(
+        assessment.status,
+        len(assessment.records),
+        blockers=assessment.blockers,
+        warnings=assessment.warnings,
+    ) == (
+        "采集完成：已保存 33 条匿名评论及回复；"
+        "平台显示 40 条，当前可访问 33 条，"
+        "可能存在已删除、审核隐藏或暂不可见评论"
+    )
 
 
 def test_total_tolerance_does_not_hide_open_root_pagination() -> None:

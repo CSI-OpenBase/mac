@@ -114,6 +114,7 @@ th, td { padding: 11px 12px; border-bottom: 1px solid #e6e9ec; text-align: left;
 th { color: #565e65; background: #f4f5f6; font-size: 12px; font-weight: 650; }
 tbody tr:last-child td { border-bottom: 0; }
 tbody tr:hover { background: #f8faf9; }
+tbody tr:target { background: #edf7f1; box-shadow: inset 3px 0 var(--primary); scroll-margin-top: 16px; }
 .select-cell { width: 44px; text-align: center; }
 .action-cell { width: 324px; text-align: right; }
 .video-actions { display: flex; justify-content: flex-end; gap: 7px; }
@@ -121,6 +122,8 @@ tbody tr:hover { background: #f8faf9; }
 .comment-export-button { width: 104px; white-space: nowrap; }
 .video-title { display: block; max-width: 100%; color: var(--ink); font-weight: 600; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .video-title:hover { color: var(--primary); text-decoration: underline; }
+.task-video-link { color: var(--primary); text-decoration: none; }
+.task-video-link:hover { text-decoration: underline; }
 .video-group-tags { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 5px; }
 .group-tag { display: inline-flex; max-width: 150px; padding: 3px 6px; overflow: hidden; color: #255747; background: #e6f3ed; border: 1px solid #bddbcf; border-radius: 4px; font-size: 11px; line-height: 1.25; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
 .group-tag:hover { border-color: var(--primary); }

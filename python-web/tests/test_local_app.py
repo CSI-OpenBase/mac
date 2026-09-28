@@ -135,6 +135,8 @@ def test_task_history_has_a_dedicated_page(tmp_path: Path) -> None:
     local_settings = settings(tmp_path)
     store = LocalStore(local_settings.database_path)
     job_id = store.create_job("authorize")["id"]
+    video_id = archive_videos(store, 1)[0]
+    video_job_id = store.create_job("comments", video_id=video_id)["id"]
 
     with TestClient(
         create_local_app(local_settings, store=store, runner=FakeRunner(store))
@@ -150,9 +152,35 @@ def test_task_history_has_a_dedicated_page(tmp_path: Path) -> None:
     assert 'href="/tasks"' in settings_page.text
     assert "最近 30 条由用户主动创建的采集任务" in tasks.text
     assert f"#{job_id}" in tasks.text
+    assert f"#{video_job_id}" in tasks.text
+    assert f'href="/videos/{video_id}"' in tasks.text
     assert "暂无任务记录" not in tasks.text
     assert "开始时间（北京时间）" in tasks.text
     assert "history-band" not in home.text
+
+
+def test_video_task_link_redirects_to_the_archived_video_page(tmp_path: Path) -> None:
+    local_settings = settings(tmp_path)
+    store = LocalStore(local_settings.database_path)
+    video_ids = archive_videos(store, 105)
+
+    with TestClient(
+        create_local_app(local_settings, store=store, runner=FakeRunner(store))
+    ) as client:
+        redirect = client.get(f"/videos/{video_ids[0]}", follow_redirects=False)
+        target = client.get(redirect.headers["location"])
+        missing = client.get("/videos/12345678", follow_redirects=False)
+        invalid = client.get("/videos/not-a-video", follow_redirects=False)
+
+    assert redirect.status_code == 303
+    assert redirect.headers["location"] == (
+        f"/?page=4&page_size=30#video-{video_ids[0]}"
+    )
+    assert target.status_code == 200
+    assert f'id="video-{video_ids[0]}"' in target.text
+    assert missing.status_code == 303
+    assert missing.headers["location"] == "/#video-archive"
+    assert invalid.status_code == 404
 
 
 def test_comment_export_directory_setting_can_be_saved_and_reset(

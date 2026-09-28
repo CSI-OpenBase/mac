@@ -631,6 +631,30 @@ class LocalStore:
             self._attach_groups(connection, videos)
         return videos[0] if videos else None
 
+    def video_page_number(self, video_id: str, *, page_size: int = 30) -> int | None:
+        if not VIDEO_ID_RE.fullmatch(video_id):
+            return None
+        bounded_page_size = min(max(int(page_size), 1), 100)
+        with self._lock, self._connect() as connection:
+            target = connection.execute(
+                "SELECT last_seen_at FROM archive_videos WHERE video_id = ?",
+                (video_id,),
+            ).fetchone()
+            if target is None:
+                return None
+            preceding = int(
+                connection.execute(
+                    """
+                    SELECT COUNT(*) AS count
+                      FROM archive_videos
+                     WHERE last_seen_at > ?
+                        OR (last_seen_at = ? AND video_id > ?)
+                    """,
+                    (target["last_seen_at"], target["last_seen_at"], video_id),
+                ).fetchone()["count"]
+            )
+        return preceding // bounded_page_size + 1
+
     def list_videos(self, *, limit: int = 5000) -> list[dict[str, Any]]:
         bounded = min(max(int(limit), 1), 100_000)
         with self._lock, self._connect() as connection:
