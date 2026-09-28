@@ -60,12 +60,32 @@ ZERO_IDS = {"", "0", "-1", "None", "null"}
 REPORTED_TOTAL_TOLERANCE_PERCENT = 5
 UNAVAILABLE_PARENT_WARNING = "references an unavailable parent and was excluded"
 MAX_EXPANSION_SCAN = 64
-FAST_HUMAN_RENDER_WAIT_MS = 200
-FAST_HUMAN_READ_BASE_MS = 300
-FAST_HUMAN_READ_PER_COMMENT_MS = 90
-FAST_HUMAN_READ_MAX_MS = 1_500
+TARGET_HUMAN_SPEED_PERCENT = 130
+AVERAGE_HUMAN_OPEN_MS = 3_000
+AVERAGE_HUMAN_RENDER_MS = 650
+AVERAGE_HUMAN_SCROLL_REVIEW_MS = 1_300
+AVERAGE_HUMAN_READ_BASE_MS = 1_300
+AVERAGE_HUMAN_READ_PER_COMMENT_MS = 350
+AVERAGE_HUMAN_READ_MAX_MS = 6_500
 BLOCKER_POLL_INTERVAL_MS = 500
-DEFAULT_CAPTURE_SECONDS = 300
+DEFAULT_CAPTURE_SECONDS = 600
+
+
+def _at_target_human_speed(average_milliseconds: int) -> int:
+    return max(
+        1,
+        round(average_milliseconds * 100 / TARGET_HUMAN_SPEED_PERCENT),
+    )
+
+
+COMMENT_OPEN_WAIT_MS = _at_target_human_speed(AVERAGE_HUMAN_OPEN_MS)
+COMMENT_RENDER_WAIT_MS = _at_target_human_speed(AVERAGE_HUMAN_RENDER_MS)
+COMMENT_SCROLL_REVIEW_MS = _at_target_human_speed(AVERAGE_HUMAN_SCROLL_REVIEW_MS)
+COMMENT_READ_BASE_MS = _at_target_human_speed(AVERAGE_HUMAN_READ_BASE_MS)
+COMMENT_READ_PER_COMMENT_MS = _at_target_human_speed(
+    AVERAGE_HUMAN_READ_PER_COMMENT_MS
+)
+COMMENT_READ_MAX_MS = _at_target_human_speed(AVERAGE_HUMAN_READ_MAX_MS)
 
 
 def utc_now() -> str:
@@ -862,12 +882,12 @@ def _drive_comment_view(page: Any) -> int:
     return 0
 
 
-def _fast_human_read_ms(new_records: int) -> int:
+def _human_plus_30_read_ms(new_records: int) -> int:
     readable_records = max(1, int(new_records))
     return min(
-        FAST_HUMAN_READ_MAX_MS,
-        FAST_HUMAN_READ_BASE_MS
-        + readable_records * FAST_HUMAN_READ_PER_COMMENT_MS,
+        COMMENT_READ_MAX_MS,
+        COMMENT_READ_BASE_MS
+        + readable_records * COMMENT_READ_PER_COMMENT_MS,
     )
 
 
@@ -986,6 +1006,7 @@ def collect_video(
 
                     page.on("response", handle_response)
                     page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+                    page.wait_for_timeout(COMMENT_OPEN_WAIT_MS)
                     try:
                         accumulator.set_page_title(page.title())
                     except Exception:
@@ -1004,13 +1025,15 @@ def collect_video(
                         active_blocker = None
                         observed_before = accumulator.observed_count
                         expanded = _drive_comment_view(page)
-                        page.wait_for_timeout(FAST_HUMAN_RENDER_WAIT_MS)
+                        page.wait_for_timeout(COMMENT_RENDER_WAIT_MS)
                         if expanded:
                             page.wait_for_timeout(
-                                _fast_human_read_ms(
+                                _human_plus_30_read_ms(
                                     accumulator.observed_count - observed_before
                                 )
                             )
+                        else:
+                            page.wait_for_timeout(COMMENT_SCROLL_REVIEW_MS)
                         assessment = accumulator.assessment()
                         complete_streak = (
                             complete_streak + 1 if assessment.is_finished else 0
@@ -1045,12 +1068,15 @@ def collect_video(
 
     diagnostics = accumulator.diagnostics(records, warnings=warnings)
     diagnostics["batch_name"] = batch_name
-    diagnostics["capture_policy"] = "fastest-human"
+    diagnostics["capture_policy"] = "human-average-plus-30-percent"
+    diagnostics["target_human_speed_percent"] = TARGET_HUMAN_SPEED_PERCENT
     diagnostics["capture_limit_seconds"] = capture_seconds
-    diagnostics["render_wait_ms"] = FAST_HUMAN_RENDER_WAIT_MS
-    diagnostics["read_base_ms"] = FAST_HUMAN_READ_BASE_MS
-    diagnostics["read_per_comment_ms"] = FAST_HUMAN_READ_PER_COMMENT_MS
-    diagnostics["read_max_ms"] = FAST_HUMAN_READ_MAX_MS
+    diagnostics["open_wait_ms"] = COMMENT_OPEN_WAIT_MS
+    diagnostics["render_wait_ms"] = COMMENT_RENDER_WAIT_MS
+    diagnostics["scroll_review_ms"] = COMMENT_SCROLL_REVIEW_MS
+    diagnostics["read_base_ms"] = COMMENT_READ_BASE_MS
+    diagnostics["read_per_comment_ms"] = COMMENT_READ_PER_COMMENT_MS
+    diagnostics["read_max_ms"] = COMMENT_READ_MAX_MS
     message = _capture_message(
         status,
         len(records),

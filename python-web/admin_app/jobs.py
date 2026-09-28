@@ -410,7 +410,7 @@ class JobWorker:
         payload = _payload(job)
         video_id = str(job.get("video_id") or payload.get("video_id") or "").strip()
         target = self._target_video(video_id)
-        capture_seconds = int(payload.get("capture_seconds", 300))
+        capture_seconds = int(payload.get("capture_seconds", 600))
         profile = (
             Path(str(payload["browser_profile_dir"]))
             if payload.get("browser_profile_dir")

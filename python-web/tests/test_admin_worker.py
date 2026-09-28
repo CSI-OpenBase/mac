@@ -12,13 +12,17 @@ import admin_app.collector as collector_module
 import admin_app.jobs as jobs_module
 import admin_app.runtime_paths as runtime_paths
 from admin_app.collector import (
-    FAST_HUMAN_READ_MAX_MS,
+    COMMENT_OPEN_WAIT_MS,
+    COMMENT_READ_MAX_MS,
+    COMMENT_RENDER_WAIT_MS,
+    COMMENT_SCROLL_REVIEW_MS,
     MAX_EXPANSION_SCAN,
+    TARGET_HUMAN_SPEED_PERCENT,
     CollectionResult,
     EXPAND_TEXT_RE,
     ResponseAccumulator,
     _drive_comment_view,
-    _fast_human_read_ms,
+    _human_plus_30_read_ms,
     _is_relevant_comment_response,
     _launch_persistent_context,
     _validate_browser_profile_dir,
@@ -986,10 +990,14 @@ def test_comment_driver_scrolls_only_when_no_expansion_is_visible() -> None:
     assert "scrollTop" in evaluations[0]
 
 
-def test_fast_human_read_time_scales_and_is_bounded() -> None:
-    assert _fast_human_read_ms(0) == 390
-    assert _fast_human_read_ms(3) == 570
-    assert _fast_human_read_ms(10_000) == FAST_HUMAN_READ_MAX_MS
+def test_human_plus_thirty_percent_timing_scales_and_is_bounded() -> None:
+    assert TARGET_HUMAN_SPEED_PERCENT == 130
+    assert COMMENT_OPEN_WAIT_MS == 2_308
+    assert COMMENT_RENDER_WAIT_MS == 500
+    assert COMMENT_SCROLL_REVIEW_MS == 1_000
+    assert _human_plus_30_read_ms(0) == 1_269
+    assert _human_plus_30_read_ms(3) == 1_807
+    assert _human_plus_30_read_ms(10_000) == COMMENT_READ_MAX_MS == 5_000
 
 
 @pytest.mark.parametrize(

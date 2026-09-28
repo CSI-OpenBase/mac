@@ -44,7 +44,7 @@ def test_default_comment_capture_limit_allows_large_reply_threads(
         session_home=tmp_path / "sessions",
     )
 
-    assert settings.browser_capture_seconds == 300
+    assert settings.browser_capture_seconds == 600
 
 
 def test_rejects_relative_or_managed_comment_export_directory(

@@ -1,22 +1,28 @@
-# Embedded Python Web Guidance
+# Python Project Guidance
 
-Canonical repository: `git@github.com:CSI-OpenBase/mac.git`
+Canonical remote: `git@github.com:CSI-OpenBase/local-web.git`
 
 This repository is the source of truth for creator authorization, automatic data
 table export, local video archives, user-triggered anonymized comment export,
-persistence, backend APIs, and the local web UI used by the macOS host.
+persistence, backend APIs, and the local web UI. WinForms consumes this project
+from source, a wheel, or a frozen backend. The macOS repository carries a
+controlled `python-web/` source snapshot for self-contained builds and records
+its imported commit in `python-web/UPSTREAM.md`.
 
 - Keep runtime data outside installed package directories.
-- Keep this directory installable and testable as a Python project, but do not
-  fetch code from another repository during normal development or release builds.
+- Keep this repository independently cloneable; do not require either desktop
+  host repository to be present for installation, tests, or wheel builds.
+- Propagate shared backend changes deliberately to the macOS `python-web/`
+  snapshot and verify both repositories; do not assume sibling directories are
+  synchronized automatically.
 - Preserve the authenticated desktop contract for `/health` and `/api/shutdown`.
 - Treat exported creator data and browser sessions as sensitive local data.
 - Do not introduce CSI Core scoring models, proprietary weights, benchmarks, or
   commercial report logic.
 - Keep migrations and `LICENSE`/`NOTICE` resources present in built wheels.
-- Treat `python-web/VERSION` as the Python package version source. Versions use
-  `x.x.xx`, start at `0.0.10`, and roll `1.1.99` to `1.2.10`; run
-  `python scripts/bump_version.py --apply` from this directory to advance it.
+- Treat the root `VERSION` file as the only application, package, and release
+  version source. Versions use `x.x.xx`, start at `0.0.10`, and roll `1.1.99`
+  to `1.2.10`; use `python scripts/bump_version.py --apply` to advance it.
 - Do not commit `var/` data, `workspace-data/`, browser profiles, exports, or
   generated build artifacts.
 
@@ -36,9 +42,9 @@ persistence, backend APIs, and the local web UI used by the macOS host.
   profile synchronization or the explicit refresh action. `comment_count` and
   `last_comment_export_at` describe the user's latest manual content export.
   Count-only refreshes must never request, persist, or clear comment content.
-- Drive manual comment export at the documented fastest-human cadence and stop
-  as soon as strict completeness stabilizes. Performance changes must not
-  weaken root/reply pagination, relationship, or aggregate-count validation.
+- Drive manual comment export at the documented 130% of average-human cadence
+  and stop as soon as strict completeness stabilizes. Performance changes must
+  not weaken root/reply pagination, relationship, or aggregate-count validation.
 - Keep incremental comment delivery separate from collection completeness.
   Every run retains a complete observed snapshot; incremental files contain
   only new or materially changed records plus required relationship context
@@ -84,7 +90,7 @@ persistence, backend APIs, and the local web UI used by the macOS host.
 
 Verify changes with:
 
-```bash
+```powershell
 python -m pytest
 python -m compileall -q admin_app scripts
 python -m pip wheel . --no-deps --wheel-dir dist
