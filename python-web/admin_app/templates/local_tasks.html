@@ -14,7 +14,7 @@
   <header class="app-header">
     <div class="brand"><img class="brand-mark" src="/static/brand/openbase-mark-reversed.svg" width="28" height="28" alt="" aria-hidden="true"><strong>CSI OpenBase</strong><span class="brand-version">v{{ app_version }}</span></div>
     <div class="header-actions">
-      <div class="header-status"><span class="status-dot {{ 'ok' if authorized else 'idle' }}"></span><span>{{ account.display_name if authorized else '未连接账号' }}</span></div>
+      <a class="header-account" href="/accounts" title="管理创作者账号"><span class="status-dot {{ 'ok' if authorized else 'idle' }}"></span><span><strong>{{ active_workspace.name }}</strong><small>{{ account.display_name if authorized else '未连接创作者' }}</small></span><i data-lucide="chevrons-up-down" aria-hidden="true"></i></a>
       <a class="header-tool" href="/settings"><i data-lucide="settings" aria-hidden="true"></i><span>设置</span></a>
       <a class="header-tool" href="/"><i data-lucide="arrow-left" aria-hidden="true"></i><span>返回首页</span></a>
     </div>

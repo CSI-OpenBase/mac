@@ -37,6 +37,12 @@ its imported commit in `python-web/UPSTREAM.md`.
   selected work directory itself, unrelated root-level files and directories,
   `logs/`, the SQLite file and schema, and the browser authorization profile
   unless a future user-facing contract explicitly says otherwise.
+- Treat the selected work directory as a local multi-account root. The primary
+  account adopts existing root-level data without moving it; additional
+  accounts use `accounts/<account-id>/` and matching isolated browser-session
+  directories. Never share SQLite indexes, works, exports, comment baselines,
+  jobs, or browser cookies across accounts. Reject switching while the current
+  account has queued or running work, and keep account removal non-destructive.
 - Keep homepage-visible comments and exported comments as separate measures.
   `visible_comment_count`, `last_comment_count_at`, and `comment_count_delta`
   describe the latest count-only platform observation, whether it came from
@@ -94,6 +100,8 @@ its imported commit in `python-web/UPSTREAM.md`.
   staging, the durable cleanup manifest, and the SQLite operation marker as one
   crash-recovery protocol; the marker must be committed in the same SQLite
   transaction as index deletion.
+- Cleanup is always scoped to the active account and must never recurse into a
+  sibling account directory or the account registry.
 - Run interrupted-cleanup recovery only after acquiring the workspace lease and
   before starting the local job runner. An uncommitted operation restores its
   staged directories; a committed operation finishes physical deletion.

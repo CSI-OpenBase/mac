@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>账号管理 - CSI OpenBase</title>
+  <link rel="icon" type="image/svg+xml" href="/static/brand/favicon.svg">
+  <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
+  <link rel="stylesheet" href="/static/local.css">
+  <script src="/static/vendor/lucide.min.js" defer></script>
+  <script src="/static/local.js" defer></script>
+</head>
+<body data-active-jobs="{{ active_jobs }}" data-latest-job="{{ latest_job_id }}">
+  <header class="app-header">
+    <div class="brand"><img class="brand-mark" src="/static/brand/openbase-mark-reversed.svg" width="28" height="28" alt="" aria-hidden="true"><strong>CSI OpenBase</strong><span class="brand-version">v{{ app_version }}</span></div>
+    <div class="header-actions">
+      <a class="header-account is-current" href="/accounts" aria-current="page"><span class="status-dot {{ 'ok' if authorized else 'idle' }}"></span><span><strong>{{ active_workspace.name }}</strong><small>{{ account.display_name if authorized else '未连接创作者' }}</small></span><i data-lucide="users" aria-hidden="true"></i></a>
+      <a class="header-tool" href="/settings"><i data-lucide="settings" aria-hidden="true"></i><span>设置</span></a>
+      <a class="header-tool" href="/"><i data-lucide="arrow-left" aria-hidden="true"></i><span>返回首页</span></a>
+    </div>
+  </header>
+
+  {% if flashes %}
+  <div class="toast-stack" aria-live="polite">
+    {% for flash in flashes %}<div class="toast toast-{{ flash.kind }}">{{ flash.message }}</div>{% endfor %}
+  </div>
+  {% endif %}
+
+  <main class="accounts-main">
+    <section class="accounts-heading">
+      <div>
+        <h1>账号管理</h1>
+        <p>每个账号使用独立的数据档案与浏览器授权</p>
+      </div>
+      <form method="post" action="/accounts" class="account-create-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label class="sr-only" for="new-account-name">新账号名称</label>
+        <input id="new-account-name" name="name" maxlength="80" placeholder="新账号名称" required autocomplete="off">
+        <button class="button button-primary" type="submit" {% if active_jobs %}disabled{% endif %}><i data-lucide="user-plus" aria-hidden="true"></i><span>添加账号</span></button>
+      </form>
+    </section>
+
+    <section class="account-list-band" aria-label="本地账号工作区">
+      <div class="table-wrap">
+        <table class="account-table">
+          <thead><tr><th>本地账号</th><th>创作者授权</th><th>视频</th><th>数据目录</th><th>操作</th></tr></thead>
+          <tbody>
+            {% for workspace in account_workspaces %}
+            <tr class="{{ 'is-archived' if workspace.archived else '' }}">
+              <td>
+                <form method="post" action="/accounts/{{ workspace.account_id }}/rename" class="account-rename-form">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <input name="name" value="{{ workspace.name }}" maxlength="80" required aria-label="本地账号名称" autocomplete="off">
+                  <button class="icon-button" type="submit" title="保存名称"><i data-lucide="save" aria-hidden="true"></i><span class="sr-only">保存名称</span></button>
+                </form>
+                <span class="account-state">
+                  {% if workspace.active %}<strong>当前账号</strong>{% elif workspace.archived %}<span>已移除</span>{% else %}<span>可切换</span>{% endif %}
+                </span>
+              </td>
+              <td>
+                {% if workspace.authorized %}
+                <strong>{{ workspace.identity.display_name|default(workspace.identity.handle) }}</strong>
+                <code>{{ workspace.identity.handle }}</code>
+                {% else %}
+                <span class="muted-text">未连接创作者</span>
+                {% endif %}
+              </td>
+              <td><strong>{{ workspace.video_count }}</strong>{% if workspace.active_jobs %}<small class="account-job-note">{{ workspace.active_jobs }} 个任务运行中</small>{% endif %}</td>
+              <td><code class="account-path" title="{{ workspace.data_home }}">{{ workspace.data_home }}</code></td>
+              <td>
+                <div class="account-actions">
+                  {% if workspace.archived %}
+                  <form method="post" action="/accounts/{{ workspace.account_id }}/restore"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-secondary" type="submit"><i data-lucide="rotate-ccw" aria-hidden="true"></i><span>恢复</span></button></form>
+                  {% elif not workspace.active %}
+                  <form method="post" action="/accounts/{{ workspace.account_id }}/switch"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="button button-primary" type="submit" {% if active_jobs %}disabled{% endif %}><i data-lucide="log-in" aria-hidden="true"></i><span>切换</span></button></form>
+                  {% if workspace.account_id != 'primary' %}<form method="post" action="/accounts/{{ workspace.account_id }}/archive"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="icon-button account-remove" type="submit" title="从列表移除并保留数据"><i data-lucide="archive" aria-hidden="true"></i><span class="sr-only">移除账号</span></button></form>{% endif %}
+                  {% else %}
+                  <a class="button button-secondary" href="/"><i data-lucide="layout-dashboard" aria-hidden="true"></i><span>打开</span></a>
+                  {% endif %}
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="account-data-note"><i data-lucide="shield-check" aria-hidden="true"></i><span>移除账号只隐藏入口，不删除数据库、作品、评论、导出文件或浏览器授权。</span></p>
+    </section>
+  </main>
+</body>
+</html>

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 from contextlib import asynccontextmanager
@@ -28,7 +29,11 @@ from . import __version__
 from .local_cleanup import (
     CLEAR_DATA_LABELS,
     clear_local_data,
-    recover_local_cleanup,
+)
+from .local_accounts import (
+    CurrentRuntimeProxy,
+    LocalAccountError,
+    LocalAccountManager,
 )
 from .local_config import (
     COMMENT_EXPORT_DIRECTORY_KEY,
@@ -37,7 +42,6 @@ from .local_config import (
     load_local_settings,
     prepare_comment_export_directory,
 )
-from .local_lock import WorkspaceLease
 from .local_store import (
     GROUP_ID_RE,
     VIDEO_ID_RE,
@@ -300,6 +304,18 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class LocalRequestSerializationMiddleware(BaseHTTPMiddleware):
+    """Keep account switching atomic relative to all local UI requests."""
+
+    def __init__(self, app: Any) -> None:
+        super().__init__(app)
+        self._lock = asyncio.Lock()
+
+    async def dispatch(self, request: Request, call_next: Any) -> Response:
+        async with self._lock:
+            return await call_next(request)
+
+
 def _redirect(path: str = "/") -> RedirectResponse:
     return RedirectResponse(path, status_code=303)
 
@@ -311,34 +327,23 @@ def create_local_app(
     runner: Any | None = None,
     shutdown_callback: Any | None = None,
 ) -> FastAPI:
-    settings = settings or load_local_settings()
-    store = store or LocalStore(settings.database_path)
-    owns_runner = runner is None
-    if runner is None:
-        from .local_jobs import LocalJobRunner
-
-        runner = LocalJobRunner(store, settings)
-    workspace_lease = WorkspaceLease(settings.data_home / ".openbase.instance.lock")
+    root_settings = settings or load_local_settings()
+    account_manager = LocalAccountManager(
+        root_settings,
+        store=store,
+        runner=runner,
+    )
+    settings = CurrentRuntimeProxy(account_manager, "settings")
+    store = CurrentRuntimeProxy(account_manager, "store")
+    runner = CurrentRuntimeProxy(account_manager, "runner")
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        release_workspace_lease = True
-        workspace_lease.acquire()
+        account_manager.start()
         try:
-            store.interrupt_active_jobs()
-            recover_local_cleanup(settings, store)
-            if hasattr(runner, "start"):
-                runner.start()
-            try:
-                yield
-            finally:
-                if owns_runner and hasattr(runner, "close"):
-                    stopped = runner.close()
-                    if stopped is False:
-                        release_workspace_lease = False
+            yield
         finally:
-            if release_workspace_lease:
-                workspace_lease.release()
+            account_manager.close()
 
     app = FastAPI(
         title="CSI OpenBase",
@@ -349,13 +354,15 @@ def create_local_app(
     )
     app.state.local_settings = settings
     app.state.local_runner = runner
+    app.state.local_accounts = account_manager
+    app.add_middleware(LocalRequestSerializationMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(
-        DesktopTokenMiddleware, token=settings.desktop_token
+        DesktopTokenMiddleware, token=root_settings.desktop_token
     )
     app.add_middleware(
         SessionMiddleware,
-        secret_key=settings.session_secret,
+        secret_key=root_settings.session_secret,
         same_site="strict",
         https_only=False,
     )
@@ -365,6 +372,12 @@ def create_local_app(
     )
     app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="static")
     templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
+
+    def account_context() -> dict[str, Any]:
+        return {
+            "account_workspaces": account_manager.account_summaries(),
+            "active_workspace": account_manager.current_summary(),
+        }
 
     def job_rows(limit: int = 30) -> list[dict[str, Any]]:
         return [
@@ -446,6 +459,7 @@ def create_local_app(
             "last_export": last_export,
             "last_discovery": last_discovery,
             "video_synced": last_discovery.get("complete") is True,
+            **account_context(),
         }
 
     @app.get("/health")
@@ -456,6 +470,10 @@ def create_local_app(
                 "version": __version__,
                 "mode": "local-archive",
                 "active_jobs": store.active_job_count(),
+                "account_id": account_manager.current.account.account_id,
+                "account_count": len(
+                    account_manager.registry.list(include_archived=False)
+                ),
                 "instance_nonce": settings.instance_nonce,
             }
         )
@@ -499,6 +517,7 @@ def create_local_app(
                     path="/video-archive",
                     query={"page_size": video_page["page_size"]},
                 ),
+                **account_context(),
             },
         )
 
@@ -574,6 +593,7 @@ def create_local_app(
                 "authorized": bool(account and account.get("handle")),
                 "active_jobs": store.active_job_count(),
                 "jobs": jobs,
+                **account_context(),
             },
         )
 
@@ -603,8 +623,107 @@ def create_local_app(
                 "default_comment_directory": str(
                     settings.works_dir / "videos" / "douyin" / "<视频ID>" / "comments"
                 ),
+                **account_context(),
             },
         )
+
+    @app.get("/accounts", response_class=HTMLResponse)
+    def local_accounts_page(request: Request) -> HTMLResponse:
+        account = store.get_meta("creator_identity", {})
+        jobs = store.list_jobs(limit=1)
+        return templates.TemplateResponse(
+            request,
+            "local_accounts.html",
+            {
+                "request": request,
+                "app_version": __version__,
+                "csrf_token": csrf_token(request),
+                "flashes": pop_flashes(request),
+                "account": account,
+                "authorized": bool(account and account.get("handle")),
+                "active_jobs": store.active_job_count(),
+                "latest_job_id": jobs[0]["id"] if jobs else "",
+                **account_context(),
+            },
+        )
+
+    @app.post("/accounts")
+    async def create_account(request: Request) -> RedirectResponse:
+        form = await request.form()
+        validate_csrf(request, form)
+        if not account_manager.managed:
+            raise HTTPException(status_code=409, detail="账号管理在测试模式下不可用")
+        try:
+            runtime = account_manager.create_and_switch(str(form.get("name") or ""))
+        except (KeyError, LocalAccountError, OSError, RuntimeError, ValueError) as exc:
+            add_flash(request, str(exc), "error")
+            return _redirect("/accounts")
+        add_flash(
+            request,
+            f"已创建并切换到“{runtime.account.name}”，请连接对应创作者账号",
+            "success",
+        )
+        return _redirect("/")
+
+    @app.post("/accounts/{account_id}/switch")
+    async def switch_account(
+        request: Request, account_id: str
+    ) -> RedirectResponse:
+        form = await request.form()
+        validate_csrf(request, form)
+        try:
+            runtime = account_manager.switch(account_id)
+        except (KeyError, LocalAccountError, OSError, RuntimeError, ValueError) as exc:
+            add_flash(request, str(exc), "error")
+            return _redirect("/accounts")
+        add_flash(request, f"已切换到“{runtime.account.name}”", "success")
+        return _redirect("/")
+
+    @app.post("/accounts/{account_id}/rename")
+    async def rename_account(
+        request: Request, account_id: str
+    ) -> RedirectResponse:
+        form = await request.form()
+        validate_csrf(request, form)
+        try:
+            account = account_manager.rename(account_id, str(form.get("name") or ""))
+        except (KeyError, LocalAccountError, OSError, RuntimeError, ValueError) as exc:
+            add_flash(request, str(exc), "error")
+        else:
+            add_flash(request, f"账号已重命名为“{account.name}”", "success")
+        return _redirect("/accounts")
+
+    @app.post("/accounts/{account_id}/archive")
+    async def archive_account(
+        request: Request, account_id: str
+    ) -> RedirectResponse:
+        form = await request.form()
+        validate_csrf(request, form)
+        try:
+            account = account_manager.archive(account_id)
+        except (KeyError, LocalAccountError, OSError, RuntimeError, ValueError) as exc:
+            add_flash(request, str(exc), "error")
+        else:
+            add_flash(
+                request,
+                f"已从账号列表移除“{account.name}”，本地数据仍完整保留",
+                "success",
+            )
+        return _redirect("/accounts")
+
+    @app.post("/accounts/{account_id}/restore")
+    async def restore_account(
+        request: Request, account_id: str
+    ) -> RedirectResponse:
+        form = await request.form()
+        validate_csrf(request, form)
+        try:
+            account = account_manager.restore(account_id)
+        except (KeyError, LocalAccountError, OSError, RuntimeError, ValueError) as exc:
+            add_flash(request, str(exc), "error")
+        else:
+            add_flash(request, f"已恢复“{account.name}”", "success")
+        return _redirect("/accounts")
 
     @app.post("/settings/comments")
     async def save_comment_settings(request: Request) -> RedirectResponse:
@@ -882,13 +1001,11 @@ def create_local_app(
 
     @app.post("/api/shutdown")
     def shutdown() -> JSONResponse:
-        if not settings.desktop_token:
+        if not root_settings.desktop_token:
             raise HTTPException(status_code=404)
         if shutdown_callback is None:
             raise HTTPException(status_code=503)
-        force_required = False
-        if owns_runner and hasattr(runner, "close"):
-            force_required = runner.close() is False
+        force_required = account_manager.close() is False
         if not force_required:
             shutdown_callback()
         return JSONResponse(

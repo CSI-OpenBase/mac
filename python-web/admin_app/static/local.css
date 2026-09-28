@@ -34,6 +34,13 @@ button, input, select { font: inherit; letter-spacing: 0; }
 .brand-version { color: #aeb5ba; font-size: 11px; font-weight: 600; }
 .header-actions { display: flex; align-items: center; gap: 18px; }
 .header-status { display: flex; align-items: center; gap: 8px; color: #e4e7e9; font-size: 13px; }
+.header-account { min-width: 170px; max-width: 280px; min-height: 40px; display: grid; grid-template-columns: 8px minmax(0, 1fr) 16px; align-items: center; gap: 8px; padding: 4px 8px; color: #fff; border: 1px solid #61686e; border-radius: 5px; text-decoration: none; }
+.header-account:hover, .header-account.is-current { background: #34393d; border-color: #8d959b; }
+.header-account > span:nth-child(2) { min-width: 0; display: grid; }
+.header-account strong, .header-account small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.header-account strong { font-size: 12px; }
+.header-account small { margin-top: 2px; color: #c5cacf; font-size: 10px; }
+.header-account svg { width: 15px; height: 15px; color: #c5cacf; }
 .header-tool { min-height: 34px; display: inline-flex; align-items: center; gap: 7px; padding: 5px 8px; color: #fff; border: 1px solid #61686e; border-radius: 5px; font-size: 12px; text-decoration: none; }
 .header-tool:hover { background: #34393d; border-color: #8d959b; }
 .header-tool svg { width: 16px; height: 16px; }
@@ -223,6 +230,33 @@ time { color: #4c555c; font-size: 12px; }
 .settings-actions { display: flex; align-items: center; gap: 12px; margin-top: 20px; }
 .settings-warning { color: var(--warning); font-size: 12px; }
 
+.accounts-main { min-height: calc(100vh - 58px); }
+.accounts-heading { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.accounts-heading p { margin-top: 6px; color: var(--muted); }
+.account-create-form, .account-rename-form, .account-actions { display: flex; align-items: center; gap: 8px; }
+.account-create-form input, .account-rename-form input { height: 36px; min-width: 0; padding: 6px 9px; color: var(--ink); background: #fff; border: 1px solid #b9c0c7; border-radius: 5px; }
+.account-create-form input { width: 220px; }
+.account-rename-form input { width: 190px; font-weight: 650; }
+.account-create-form input:focus-visible, .account-rename-form input:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.account-list-band { min-height: 360px; }
+.account-table { min-width: 1040px; }
+.account-table th:nth-child(1) { width: 260px; }
+.account-table th:nth-child(2) { width: 190px; }
+.account-table th:nth-child(3) { width: 100px; }
+.account-table th:nth-child(4) { width: 300px; }
+.account-table th:nth-child(5) { width: 190px; }
+.account-table tr.is-archived { opacity: .62; }
+.account-state { display: block; margin-top: 6px; color: var(--muted); font-size: 11px; }
+.account-state strong { color: var(--primary); }
+.account-job-note { display: block; margin-top: 4px; color: var(--warning); }
+.account-path { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-actions { justify-content: flex-end; }
+.account-actions form { margin: 0; }
+.account-remove { color: var(--warning); }
+.account-data-note { display: flex; align-items: center; gap: 8px; margin-top: 16px; color: var(--muted); font-size: 12px; }
+.account-data-note svg { width: 16px; height: 16px; color: var(--primary); }
+.muted-text { color: var(--muted); }
+
 .clear-data-dialog {
   width: min(590px, calc(100vw - 32px));
   max-height: min(760px, calc(100vh - 32px));
@@ -261,6 +295,8 @@ time { color: #4c555c; font-size: 12px; }
 
 @media (max-width: 760px) {
   .header-status { display: none; }
+  .header-account { min-width: 0; max-width: 160px; }
+  .header-account small { display: none; }
   .header-actions { gap: 8px; }
   .overview-band { align-items: flex-start; flex-direction: column; }
   .summary { width: 100%; gap: 10px; }
@@ -291,6 +327,9 @@ time { color: #4c555c; font-size: 12px; }
   .directory-control .button { width: 100%; }
   .settings-actions { align-items: stretch; flex-direction: column; }
   .settings-actions .button { width: 100%; }
+  .accounts-heading { align-items: stretch; flex-direction: column; }
+  .account-create-form { align-items: stretch; flex-direction: column; }
+  .account-create-form input, .account-create-form .button { width: 100%; }
   .dialog-header, .dialog-body, .dialog-actions { padding-inline: 18px; }
   .dialog-actions { flex-direction: column-reverse; }
   .dialog-actions .button { width: 100%; }

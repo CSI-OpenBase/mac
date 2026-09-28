@@ -669,6 +669,13 @@ class LocalStore:
             self._attach_groups(connection, videos)
         return videos
 
+    def video_count(self) -> int:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS count FROM archive_videos"
+            ).fetchone()
+        return int(row["count"])
+
     def list_video_page(
         self, *, page: int = 1, page_size: int = 30, group_id: str | None = None
     ) -> dict[str, Any]:
