@@ -163,6 +163,7 @@ def test_video_sync_indexes_idempotent_file_archive(tmp_path: Path) -> None:
             "video_id": VIDEO_ID,
             "title": "测试视频",
             "url": f"https://www.douyin.com/video/{VIDEO_ID}",
+            "published_at": "2026-09-01T00:30:00Z",
             "view_count": 100 + calls,
             "sources": ["response"],
             "platform_groups": [
@@ -197,6 +198,7 @@ def test_video_sync_indexes_idempotent_file_archive(tmp_path: Path) -> None:
     assert len(videos) == 1
     assert videos[0]["first_seen_at"] == "2026-09-07T00:00:00Z"
     assert videos[0]["last_seen_at"] == "2026-09-08T00:00:00Z"
+    assert videos[0]["record"]["published_at"] == "2026-09-01T00:30:00Z"
     assert videos[0]["visible_comment_count"] == 34
     assert videos[0]["comment_count"] == 0
     assert [(group["name"], group["source"]) for group in videos[0]["groups"]] == [

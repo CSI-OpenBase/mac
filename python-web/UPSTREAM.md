@@ -2,7 +2,7 @@
 
 The current `python-web/` snapshot was synchronized from the Apache-2.0 licensed
 [`CSI-OpenBase/local-web`](https://github.com/CSI-OpenBase/local-web) repository
-at commit `5d06aacc5de9521924e8dcbadc4a289d3808c91a` on 2026-09-28.
+at commit `7c6c817530a671fb3f49c99e9d9419573e7478e0` on 2026-09-28.
 
 The source is committed directly in this repository. It is not a Git submodule,
 and builds do not contact the upstream repository. The original `LICENSE`,

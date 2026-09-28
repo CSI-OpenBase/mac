@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -61,6 +62,93 @@ def _with_time_displays(
     for field in fields:
         value[f"{field}_display"] = beijing_display(value.get(field))
     return value
+
+
+def _video_latest_metadata(
+    settings: LocalSettings, video: dict[str, Any]
+) -> dict[str, Any]:
+    record = video.get("record")
+    indexed = dict(record) if isinstance(record, dict) else {}
+
+    video_id = str(video.get("video_id") or "")
+    if not VIDEO_ID_RE.fullmatch(video_id):
+        return indexed
+    video_directory = (settings.videos_dir / "douyin" / video_id).resolve()
+    manifest_path = video_directory / "manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+        relative_metadata = Path(str(manifest.get("latest_metadata") or ""))
+        metadata_path = (video_directory / relative_metadata).resolve()
+        metadata_path.relative_to(video_directory)
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return indexed
+    if not isinstance(metadata, dict):
+        return indexed
+    return {**indexed, **metadata}
+
+
+def _video_published_at(settings: LocalSettings, video: dict[str, Any]) -> str | None:
+    published_at = str(
+        _video_latest_metadata(settings, video).get("published_at") or ""
+    ).strip()
+    return published_at or None
+
+
+def _video_cover_path(
+    settings: LocalSettings, video: dict[str, Any]
+) -> Path | None:
+    video_id = str(video.get("video_id") or "")
+    relative_cover = str(video.get("cover_path") or "").strip()
+    if not VIDEO_ID_RE.fullmatch(video_id) or not relative_cover:
+        return None
+    video_directory = (settings.videos_dir / "douyin" / video_id).resolve()
+    candidate = (settings.data_home / relative_cover).resolve()
+    try:
+        candidate.relative_to(video_directory)
+    except ValueError:
+        return None
+    return candidate if candidate.is_file() else None
+
+
+def _video_archive_row(
+    settings: LocalSettings, video: dict[str, Any]
+) -> dict[str, Any]:
+    metadata = _video_latest_metadata(settings, video)
+    raw_metrics = metadata.get("visible_metrics")
+    metrics = raw_metrics if isinstance(raw_metrics, dict) else {}
+
+    def metric(name: str) -> int | None:
+        value = metrics.get(name)
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    source_labels = {"response": "平台接口", "dom": "页面可见内容"}
+    raw_sources = metadata.get("sources")
+    sources = raw_sources if isinstance(raw_sources, list) else []
+    value = {
+        **video,
+        "description": str(metadata.get("desc") or "").strip(),
+        "published_at": str(metadata.get("published_at") or "").strip() or None,
+        "observed_at": str(metadata.get("observed_at") or "").strip() or None,
+        "metrics": {
+            "view_count": metric("view_count"),
+            "like_count": metric("like_count"),
+            "comment_count": metric("comment_count"),
+            "collect_count": metric("collect_count"),
+            "share_count": metric("share_count"),
+        },
+        "sources_display": " / ".join(
+            source_labels.get(str(source), str(source))
+            for source in sources
+            if str(source).strip()
+        )
+        or "—",
+        "cover_available": _video_cover_path(settings, video) is not None,
+    }
+    return _with_time_displays(
+        value,
+        ("published_at", "observed_at", "first_seen_at", "last_seen_at"),
+    )
 
 
 def _video_page(value: Any) -> int:
@@ -231,8 +319,12 @@ def create_local_app(
         )
         videos = [
             _with_time_displays(
-                video,
+                {
+                    **video,
+                    "published_at": _video_published_at(settings, video),
+                },
                 (
+                    "published_at",
                     "first_seen_at",
                     "last_seen_at",
                     "last_comment_count_at",
@@ -298,6 +390,54 @@ def create_local_app(
     @app.get("/", response_class=HTMLResponse)
     def home(request: Request) -> HTMLResponse:
         return templates.TemplateResponse(request, "local_home.html", page_context(request))
+
+    @app.get("/video-archive", response_class=HTMLResponse)
+    def video_archive(request: Request) -> HTMLResponse:
+        requested_page = _video_page(request.query_params.get("page"))
+        requested_page_size = _video_page_size(request.query_params.get("page_size"))
+        video_page = store.list_video_page(
+            page=requested_page,
+            page_size=requested_page_size,
+        )
+        jobs = store.list_jobs(limit=1)
+        account = store.get_meta("creator_identity", {})
+        return templates.TemplateResponse(
+            request,
+            "local_video_archive.html",
+            {
+                "request": request,
+                "app_version": __version__,
+                "account": account,
+                "authorized": bool(account and account.get("handle")),
+                "active_jobs": store.active_job_count(),
+                "latest_job_id": jobs[0]["id"] if jobs else "",
+                "videos": [
+                    _video_archive_row(settings, video)
+                    for video in video_page["items"]
+                ],
+                "video_total": video_page["total"],
+                "video_page_size": video_page["page_size"],
+                "video_pagination": pagination(
+                    page=video_page["page"],
+                    total_pages=video_page["pages"],
+                    total_items=video_page["total"],
+                    path="/video-archive",
+                    query={"page_size": video_page["page_size"]},
+                ),
+            },
+        )
+
+    @app.get("/video-covers/{video_id}", include_in_schema=False)
+    def video_cover(video_id: str) -> FileResponse:
+        if not VIDEO_ID_RE.fullmatch(video_id):
+            raise HTTPException(status_code=404)
+        video = store.get_video(video_id)
+        if video is None:
+            raise HTTPException(status_code=404)
+        cover_path = _video_cover_path(settings, video)
+        if cover_path is None:
+            raise HTTPException(status_code=404)
+        return FileResponse(cover_path)
 
     @app.get("/videos/{video_id}")
     def focus_video(request: Request, video_id: str) -> RedirectResponse:

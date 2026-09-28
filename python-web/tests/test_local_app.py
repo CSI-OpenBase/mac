@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -129,6 +130,177 @@ def test_local_home_displays_stored_utc_times_in_beijing(
     assert "2026-09-07 18:00:00" in home.text
     assert "开始时间（北京时间）" in tasks.text
     assert "2026-09-07 12:00:00" in tasks.text
+
+
+def test_local_home_displays_indexed_and_legacy_video_publish_times(
+    tmp_path: Path,
+) -> None:
+    local_settings = settings(tmp_path)
+    store = LocalStore(local_settings.database_path)
+    indexed_video_id, legacy_video_id = archive_videos(store, 2)
+    store.upsert_videos(
+        [
+            {
+                "video_id": indexed_video_id,
+                "title": "索引发布时间",
+                "video_url": f"https://www.douyin.com/video/{indexed_video_id}",
+                "manifest_path": (
+                    f"works/videos/douyin/{indexed_video_id}/manifest.json"
+                ),
+                "first_seen_at": "2026-09-07T10:00:00Z",
+                "last_seen_at": "2026-09-07T10:00:00Z",
+                "published_at": "2026-09-01T00:30:00Z",
+            }
+        ]
+    )
+    legacy_directory = local_settings.videos_dir / "douyin" / legacy_video_id
+    metadata_path = legacy_directory / "metadata" / "latest.json"
+    metadata_path.parent.mkdir(parents=True)
+    metadata_path.write_text(
+        json.dumps({"published_at": "2026-09-02T01:00:00Z"}),
+        encoding="utf-8",
+    )
+    (legacy_directory / "manifest.json").write_text(
+        json.dumps({"latest_metadata": "metadata/latest.json"}),
+        encoding="utf-8",
+    )
+
+    with TestClient(
+        create_local_app(local_settings, store=store, runner=FakeRunner(store))
+    ) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert "<th>发布时间</th>" in response.text
+    indexed_row = response.text.split(
+        f'id="video-{indexed_video_id}"', 1
+    )[1].split("</tr>", 1)[0]
+    legacy_row = response.text.split(
+        f'id="video-{legacy_video_id}"', 1
+    )[1].split("</tr>", 1)[0]
+    assert 'datetime="2026-09-01T00:30:00Z"' in indexed_row
+    assert "2026-09-01 08:30:00" in indexed_row
+    assert 'datetime="2026-09-02T01:00:00Z"' in legacy_row
+    assert "2026-09-02 09:00:00" in legacy_row
+
+
+def test_video_archive_page_lists_synced_metadata_and_serves_safe_cover(
+    tmp_path: Path,
+) -> None:
+    local_settings = settings(tmp_path)
+    store = LocalStore(local_settings.database_path)
+    video_ids = archive_videos(store, 31)
+    video_id = video_ids[-1]
+    video_directory = local_settings.videos_dir / "douyin" / video_id
+    metadata_path = video_directory / "metadata" / "latest.json"
+    metadata_path.parent.mkdir(parents=True)
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "desc": "完整作品描述",
+                "published_at": "2026-09-01T00:30:00Z",
+                "observed_at": "2026-09-07T04:00:00Z",
+                "visible_metrics": {
+                    "view_count": 12_345,
+                    "like_count": 678,
+                    "comment_count": 90,
+                    "collect_count": 45,
+                    "share_count": 12,
+                },
+                "sources": ["response", "dom"],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (video_directory / "manifest.json").write_text(
+        json.dumps({"latest_metadata": "metadata/latest.json"}),
+        encoding="utf-8",
+    )
+    cover_path = video_directory / "cover.jpg"
+    cover_path.write_bytes(b"\xff\xd8\xff\xd9")
+    store.upsert_videos(
+        [
+            {
+                "video_id": video_id,
+                "title": "完整档案作品",
+                "video_url": f"https://www.douyin.com/video/{video_id}",
+                "cover_path": cover_path.relative_to(
+                    local_settings.data_home
+                ).as_posix(),
+                "manifest_path": (
+                    f"works/videos/douyin/{video_id}/manifest.json"
+                ),
+                "first_seen_at": "2026-09-07T01:00:00Z",
+                "last_seen_at": "2026-09-07T02:00:00Z",
+                "platform_groups_observed": True,
+                "platform_groups": [{"id": "column-1", "name": "档案栏目"}],
+            }
+        ]
+    )
+
+    with TestClient(
+        create_local_app(local_settings, store=store, runner=FakeRunner(store))
+    ) as client:
+        home = client.get("/")
+        archive = client.get("/video-archive?page_size=30")
+        second_page = client.get("/video-archive?page=2&page_size=30")
+        cover = client.get(f"/video-covers/{video_id}")
+        invalid_cover = client.get("/video-covers/not-a-video")
+
+    assert home.status_code == 200
+    assert 'href="/video-archive"' in home.text
+    assert "查看视频档案" in home.text
+    assert archive.status_code == 200
+    assert "31 个已同步作品" in archive.text
+    assert "完整档案作品" in archive.text
+    assert "完整作品描述" in archive.text
+    assert "2026-09-01 08:30:00" in archive.text
+    assert "档案栏目" in archive.text
+    assert "12,345" in archive.text
+    assert "678" in archive.text
+    assert "90" in archive.text
+    assert "45" in archive.text
+    assert "平台接口 / 页面可见内容" in archive.text
+    assert "观测 2026-09-07 12:00:00" in archive.text
+    assert "/video-archive?page_size=30&amp;page=2" in archive.text
+    assert second_page.status_code == 200
+    assert video_ids[0] in second_page.text
+    assert cover.status_code == 200
+    assert cover.headers["content-type"] == "image/jpeg"
+    assert cover.content == b"\xff\xd8\xff\xd9"
+    assert invalid_cover.status_code == 404
+
+
+def test_local_home_marks_comment_export_status_per_video(tmp_path: Path) -> None:
+    local_settings = settings(tmp_path)
+    store = LocalStore(local_settings.database_path)
+    exported_video_id, pending_video_id = archive_videos(store, 2)
+    store.record_comment_export(
+        exported_video_id,
+        count=27,
+        exported_at="2026-09-07T12:00:00Z",
+    )
+
+    with TestClient(
+        create_local_app(local_settings, store=store, runner=FakeRunner(store))
+    ) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    exported_row = response.text.split(
+        f'id="video-{exported_video_id}"', 1
+    )[1].split("</tr>", 1)[0]
+    pending_row = response.text.split(
+        f'id="video-{pending_video_id}"', 1
+    )[1].split("</tr>", 1)[0]
+    assert 'data-comment-export-status="exported"' in exported_row
+    assert 'data-lucide="circle-check"' in exported_row
+    assert "已导出" in exported_row
+    assert "27 条 · 2026-09-07 20:00:00" in exported_row
+    assert 'data-comment-export-status="not-exported"' in pending_row
+    assert 'data-lucide="circle-dashed"' in pending_row
+    assert "未导出" in pending_row
 
 
 def test_task_history_has_a_dedicated_page(tmp_path: Path) -> None:

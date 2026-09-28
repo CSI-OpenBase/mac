@@ -642,6 +642,7 @@ class LocalJobRunner:
                     "platform": "douyin",
                     "title": str(manifest.get("title") or record.get("title") or video_id),
                     "video_url": str(manifest["url"]),
+                    "published_at": record.get("published_at"),
                     "cover_path": (
                         _relative(manifest_path.parent / str(cover["path"]), self.settings.data_home)
                         if cover.get("path")

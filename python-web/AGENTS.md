@@ -28,9 +28,10 @@ its imported commit in `python-web/UPSTREAM.md`.
 
 ## Local Data Contracts
 
-- `admin_app/local_app.py` and `admin_app/templates/local_home.html` own the
-  local operator workflow; `admin_app/local_store.py` owns its SQLite index,
-  and `admin_app/local_cleanup.py` is the only entry point for destructive
+- `admin_app/local_app.py`, `admin_app/templates/local_home.html`, and
+  `admin_app/templates/local_video_archive.html` own the local operator
+  workflow; `admin_app/local_store.py` owns its SQLite index, and
+  `admin_app/local_cleanup.py` is the only entry point for destructive
   local-data maintenance.
 - Treat `exports/` and `works/` as application-managed trees. Preserve the
   selected work directory itself, unrelated root-level files and directories,

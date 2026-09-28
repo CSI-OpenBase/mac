@@ -56,9 +56,12 @@
       <form method="post" action="/actions/sync-videos" class="action-item">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <div><span class="step">02</span><h2>视频档案</h2><p>{{ last_discovery.summary|default('尚未同步') }}</p></div>
-        <button type="submit" class="button button-primary" {% if not authorized %}disabled{% endif %}>
-          <i data-lucide="folder-sync" aria-hidden="true"></i><span>同步个人主页</span>
-        </button>
+        <span class="action-buttons">
+          <button type="submit" class="button button-primary" {% if not authorized %}disabled{% endif %}>
+            <i data-lucide="folder-sync" aria-hidden="true"></i><span>同步个人主页</span>
+          </button>
+          <a class="button button-secondary" href="/video-archive"><i data-lucide="list-video" aria-hidden="true"></i><span>查看视频档案</span></a>
+        </span>
       </form>
 
       <form method="post" action="/actions/export" class="action-item">
@@ -137,20 +140,32 @@
         {% if selected_group_id %}<input type="hidden" name="group_id" value="{{ selected_group_id }}">{% endif %}
         <div class="table-wrap">
           <table>
-            <thead><tr><th class="select-cell"><input type="checkbox" data-select-all aria-label="选择本页全部视频" {% if not videos %}disabled{% endif %}></th><th>视频</th><th>分组</th><th>首次发现</th><th>最近同步</th><th>评论数</th><th class="action-cell">操作</th></tr></thead>
+            <thead><tr><th class="select-cell"><input type="checkbox" data-select-all aria-label="选择本页全部视频" {% if not videos %}disabled{% endif %}></th><th>视频</th><th>分组</th><th>发布时间</th><th>首次发现</th><th>最近同步</th><th>评论数</th><th class="action-cell">操作</th></tr></thead>
             <tbody>
               {% for video in videos %}
               <tr id="video-{{ video.video_id }}">
                 <td class="select-cell"><input type="checkbox" name="video_id" value="{{ video.video_id }}" aria-label="选择 {{ video.title }}"></td>
                 <td><a href="{{ video.video_url }}" target="_blank" rel="noopener noreferrer" class="video-title">{{ video.title }}</a><code>{{ video.video_id }}</code></td>
                 <td><div class="video-group-tags">{% for group in video.groups %}<a href="/?page_size={{ video_page_size }}&amp;group_id={{ group.group_id }}#video-archive" class="group-tag group-tag-{{ group.source }}">{{ group.name }}</a>{% else %}<span class="cell-note">未分组</span>{% endfor %}</div></td>
+                <td><time datetime="{{ video.published_at|default('', true) }}">{{ video.published_at_display }}</time></td>
                 <td><time datetime="{{ video.first_seen_at }}">{{ video.first_seen_at_display }}</time></td>
                 <td><time datetime="{{ video.last_seen_at }}">{{ video.last_seen_at_display }}</time></td>
-                <td><strong>{% if video.visible_comment_count is not none %}{{ "{:,}".format(video.visible_comment_count) }}{% else %}—{% endif %}</strong><span class="cell-note">{% if video.last_comment_count_at %}{% if video.comment_count_delta is none %}首次获取{% elif video.comment_count_delta > 0 %}较上次 +{{ "{:,}".format(video.comment_count_delta) }}{% elif video.comment_count_delta < 0 %}较上次 {{ "{:,}".format(video.comment_count_delta) }}{% else %}较上次无变化{% endif %} · {{ video.last_comment_count_at_display }}{% else %}尚未获取评论数{% endif %}</span><span class="cell-note">{% if video.last_comment_export_at %}上次导出 {{ "{:,}".format(video.comment_count|default(0)) }} 条 · {{ video.last_comment_export_at_display }}{% else %}尚未导出评论{% endif %}</span></td>
+                <td class="comment-count-cell">
+                  <strong>{% if video.visible_comment_count is not none %}{{ "{:,}".format(video.visible_comment_count) }}{% else %}—{% endif %}</strong>
+                  <span class="cell-note">{% if video.last_comment_count_at %}{% if video.comment_count_delta is none %}首次获取{% elif video.comment_count_delta > 0 %}较上次 +{{ "{:,}".format(video.comment_count_delta) }}{% elif video.comment_count_delta < 0 %}较上次 {{ "{:,}".format(video.comment_count_delta) }}{% else %}较上次无变化{% endif %} · {{ video.last_comment_count_at_display }}{% else %}尚未获取评论数{% endif %}</span>
+                  <span class="comment-export-summary">
+                    {% if video.last_comment_export_at %}
+                    <span class="comment-export-state is-exported" data-comment-export-status="exported" title="已导出评论"><i data-lucide="circle-check" aria-hidden="true"></i><span>已导出</span></span>
+                    <span class="comment-export-meta">{{ "{:,}".format(video.comment_count|default(0)) }} 条 · {{ video.last_comment_export_at_display }}</span>
+                    {% else %}
+                    <span class="comment-export-state is-not-exported" data-comment-export-status="not-exported" title="尚未导出评论"><i data-lucide="circle-dashed" aria-hidden="true"></i><span>未导出</span></span>
+                    {% endif %}
+                  </span>
+                </td>
                 <td class="action-cell"><div class="video-actions"><button type="submit" class="button button-secondary comment-count-button" formmethod="post" formaction="/videos/{{ video.video_id }}/comment-count" title="仅更新评论数量，不导出评论内容"><i data-lucide="refresh-cw" aria-hidden="true"></i><span>获取最新评论</span></button><button type="submit" class="button button-secondary comment-export-button" formmethod="post" formaction="/videos/{{ video.video_id }}/comments" title="导出相对本地索引新增或发生变化的评论"><i data-lucide="message-square-down" aria-hidden="true"></i><span>导出评论</span></button><button type="submit" class="icon-button" formmethod="post" formaction="/videos/{{ video.video_id }}/comments/full" title="完整重新同步评论"><i data-lucide="refresh-ccw" aria-hidden="true"></i><span class="sr-only">完整重新同步评论</span></button></div></td>
               </tr>
               {% else %}
-              <tr><td colspan="7" class="empty">暂无视频档案</td></tr>
+              <tr><td colspan="8" class="empty">暂无视频档案</td></tr>
               {% endfor %}
             </tbody>
           </table>

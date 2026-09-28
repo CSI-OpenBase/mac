@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>视频档案 - CSI OpenBase</title>
+  <link rel="icon" type="image/svg+xml" href="/static/brand/favicon.svg">
+  <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
+  <link rel="stylesheet" href="/static/local.css">
+  <script src="/static/vendor/lucide.min.js" defer></script>
+  <script src="/static/local.js" defer></script>
+</head>
+<body data-active-jobs="{{ active_jobs }}" data-latest-job="{{ latest_job_id }}">
+  <header class="app-header">
+    <div class="brand"><img class="brand-mark" src="/static/brand/openbase-mark-reversed.svg" width="28" height="28" alt="" aria-hidden="true"><strong>CSI OpenBase</strong><span class="brand-version">v{{ app_version }}</span></div>
+    <div class="header-actions">
+      <div class="header-status"><span class="status-dot {{ 'ok' if authorized else 'idle' }}"></span><span>{{ account.display_name if authorized else '未连接账号' }}</span></div>
+      <a class="header-tool" href="/tasks"><i data-lucide="list-checks" aria-hidden="true"></i><span>任务记录</span></a>
+      <a class="header-tool" href="/"><i data-lucide="arrow-left" aria-hidden="true"></i><span>返回首页</span></a>
+    </div>
+  </header>
+
+  <main class="video-archive-main">
+    <section class="video-catalog-heading">
+      <div><h1>视频档案</h1><p>{{ video_total }} 个已同步作品</p></div>
+      <form class="page-size-form" method="get" action="/video-archive">
+        <input type="hidden" name="page" value="1">
+        <label for="archive-page-size">每页</label>
+        <select id="archive-page-size" name="page_size">
+          {% for size in (30, 50, 100) %}<option value="{{ size }}" {{ 'selected' if video_page_size == size else '' }}>{{ size }}</option>{% endfor %}
+        </select>
+        <span>条</span>
+        <button class="icon-button" type="submit" title="应用每页数量"><i data-lucide="check" aria-hidden="true"></i><span class="sr-only">应用每页数量</span></button>
+      </form>
+    </section>
+
+    <section class="video-catalog-band" aria-labelledby="video-catalog-title">
+      <div class="section-heading"><div><h2 id="video-catalog-title">同步信息</h2><span>北京时间</span></div></div>
+      <div class="table-wrap">
+        <table class="video-catalog-table">
+          <thead><tr><th>作品</th><th>完整描述</th><th>发布时间</th><th>分组</th><th>可见指标</th><th>档案时间</th><th>来源</th></tr></thead>
+          <tbody>
+            {% for video in videos %}
+            <tr>
+              <td><div class="video-catalog-identity"><span class="video-catalog-cover">{% if video.cover_available %}<img src="/video-covers/{{ video.video_id }}" alt="" loading="lazy" aria-hidden="true">{% else %}<i data-lucide="image-off" aria-hidden="true"></i>{% endif %}</span><span><a href="{{ video.video_url }}" target="_blank" rel="noopener noreferrer" class="video-title">{{ video.title }}</a><code>{{ video.video_id }}</code></span></div></td>
+              <td class="video-catalog-description">{{ video.description|default('—', true) }}</td>
+              <td><time datetime="{{ video.published_at|default('', true) }}">{{ video.published_at_display }}</time></td>
+              <td><div class="video-group-tags">{% for group in video.groups %}<span class="group-tag group-tag-{{ group.source }}">{{ group.name }}</span>{% else %}<span class="cell-note">未分组</span>{% endfor %}</div></td>
+              <td><dl class="video-metrics"><div><dt>播放</dt><dd>{% if video.metrics.view_count is not none %}{{ "{:,}".format(video.metrics.view_count) }}{% else %}—{% endif %}</dd></div><div><dt>点赞</dt><dd>{% if video.metrics.like_count is not none %}{{ "{:,}".format(video.metrics.like_count) }}{% else %}—{% endif %}</dd></div><div><dt>评论</dt><dd>{% if video.metrics.comment_count is not none %}{{ "{:,}".format(video.metrics.comment_count) }}{% else %}—{% endif %}</dd></div><div><dt>收藏</dt><dd>{% if video.metrics.collect_count is not none %}{{ "{:,}".format(video.metrics.collect_count) }}{% else %}—{% endif %}</dd></div><div><dt>分享</dt><dd>{% if video.metrics.share_count is not none %}{{ "{:,}".format(video.metrics.share_count) }}{% else %}—{% endif %}</dd></div></dl></td>
+              <td><span class="video-archive-times"><span><small>首次发现</small><time datetime="{{ video.first_seen_at }}">{{ video.first_seen_at_display }}</time></span><span><small>最近同步</small><time datetime="{{ video.last_seen_at }}">{{ video.last_seen_at_display }}</time></span></span></td>
+              <td class="video-source"><strong>{{ video.sources_display }}</strong><span class="cell-note">观测 {{ video.observed_at_display }}</span></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7" class="empty">暂无视频档案</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% set pagination = video_pagination %}
+      {% set pagination_label = '视频档案详情分页' %}
+      {% include "partials/pagination.html" ignore missing %}
+    </section>
+  </main>
+</body>
+</html>
