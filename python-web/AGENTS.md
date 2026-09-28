@@ -46,6 +46,8 @@ its imported commit in `python-web/UPSTREAM.md`.
 - Drive manual comment export at the documented 130% of average-human cadence
   and stop as soon as strict completeness stabilizes. Performance changes must
   not weaken root/reply pagination, relationship, or aggregate-count validation.
+  Do not impose a fixed total capture duration: every newly observed comment or
+  reply resets the bounded no-progress watchdog.
 - Keep incremental comment delivery separate from collection completeness.
   Every run retains a complete observed snapshot; incremental files contain
   only new or materially changed records plus required relationship context

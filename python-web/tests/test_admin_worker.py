@@ -21,6 +21,7 @@ from admin_app.collector import (
     CollectionResult,
     EXPAND_TEXT_RE,
     ResponseAccumulator,
+    _NoProgressWatchdog,
     _drive_comment_view,
     _human_plus_30_read_ms,
     _is_relevant_comment_response,
@@ -47,6 +48,23 @@ def test_comment_browser_listener_only_accepts_douyin_responses() -> None:
     assert not _is_relevant_comment_response(
         "https://douyin.com.evil.example/aweme/v1/web/comment/list/"
     )
+
+
+def test_no_progress_watchdog_has_no_total_capture_limit() -> None:
+    watchdog = _NoProgressWatchdog.start(
+        timeout_seconds=10,
+        observed_count=1,
+        now=0,
+    )
+
+    assert watchdog.expired(now=9.9) is False
+    assert watchdog.observe(2, now=9.9) is True
+    assert watchdog.deadline == pytest.approx(19.9)
+    assert watchdog.observe(3, now=19.8) is True
+    assert watchdog.deadline == pytest.approx(29.8)
+    assert watchdog.expired(now=20) is False
+    assert watchdog.observe(3, now=29.7) is False
+    assert watchdog.expired(now=29.8) is True
 
 
 def _accumulator(

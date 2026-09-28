@@ -68,7 +68,7 @@ AVERAGE_HUMAN_READ_BASE_MS = 1_300
 AVERAGE_HUMAN_READ_PER_COMMENT_MS = 350
 AVERAGE_HUMAN_READ_MAX_MS = 6_500
 BLOCKER_POLL_INTERVAL_MS = 500
-DEFAULT_CAPTURE_SECONDS = 600
+DEFAULT_NO_PROGRESS_SECONDS = 600
 
 
 def _at_target_human_speed(average_milliseconds: int) -> int:
@@ -324,6 +324,35 @@ class CaptureAssessment:
     @property
     def is_finished(self) -> bool:
         return self.status != "blocked"
+
+
+@dataclass(slots=True)
+class _NoProgressWatchdog:
+    """Expire only after content collection stops making progress."""
+
+    timeout_seconds: int
+    observed_count: int
+    deadline: float
+
+    @classmethod
+    def start(
+        cls, *, timeout_seconds: int, observed_count: int, now: float
+    ) -> "_NoProgressWatchdog":
+        return cls(
+            timeout_seconds=timeout_seconds,
+            observed_count=observed_count,
+            deadline=now + timeout_seconds,
+        )
+
+    def observe(self, observed_count: int, *, now: float) -> bool:
+        if observed_count <= self.observed_count:
+            return False
+        self.observed_count = observed_count
+        self.deadline = now + self.timeout_seconds
+        return True
+
+    def expired(self, *, now: float) -> bool:
+        return now >= self.deadline
 
 
 class ResponseAccumulator:
@@ -936,14 +965,14 @@ def collect_video(
     video_title: str = "",
     batches_dir: Path | None = None,
     browser_profile_dir: Path | None = None,
-    capture_seconds: int = DEFAULT_CAPTURE_SECONDS,
+    capture_seconds: int = DEFAULT_NO_PROGRESS_SECONDS,
     trigger: str = "auto",
 ) -> CollectionResult:
-    """Open a headed persistent browser and capture one video conservatively."""
+    """Capture until complete, stopping only after a bounded period without data."""
     if not VIDEO_ID_RE.fullmatch(video_id):
         raise ValueError("video_id must contain 8-32 digits")
     if not 10 <= capture_seconds <= 900:
-        raise ValueError("capture_seconds must be between 10 and 900")
+        raise ValueError("no-progress timeout must be between 10 and 900 seconds")
     if trigger not in {"auto", "manual"}:
         raise ValueError("trigger must be auto or manual")
     url = video_url or f"https://www.douyin.com/video/{video_id}"
@@ -1011,10 +1040,21 @@ def collect_video(
                         accumulator.set_page_title(page.title())
                     except Exception:
                         pass
-                    deadline = time.monotonic() + capture_seconds
+                    progress_watchdog = _NoProgressWatchdog.start(
+                        timeout_seconds=capture_seconds,
+                        observed_count=accumulator.observed_count,
+                        now=time.monotonic(),
+                    )
                     complete_streak = 0
                     active_blocker: str | None = None
-                    while time.monotonic() < deadline:
+                    while True:
+                        now = time.monotonic()
+                        progress_watchdog.observe(
+                            accumulator.observed_count,
+                            now=now,
+                        )
+                        if progress_watchdog.expired(now=now):
+                            break
                         blocker = _page_blocker(page)
                         if blocker:
                             # Keep the headed window open so the operator can log
@@ -1034,6 +1074,10 @@ def collect_video(
                             )
                         else:
                             page.wait_for_timeout(COMMENT_SCROLL_REVIEW_MS)
+                        progress_watchdog.observe(
+                            accumulator.observed_count,
+                            now=time.monotonic(),
+                        )
                         assessment = accumulator.assessment()
                         complete_streak = (
                             complete_streak + 1 if assessment.is_finished else 0
@@ -1070,7 +1114,8 @@ def collect_video(
     diagnostics["batch_name"] = batch_name
     diagnostics["capture_policy"] = "human-average-plus-30-percent"
     diagnostics["target_human_speed_percent"] = TARGET_HUMAN_SPEED_PERCENT
-    diagnostics["capture_limit_seconds"] = capture_seconds
+    diagnostics["capture_strategy"] = "until-complete-with-no-progress-timeout"
+    diagnostics["no_progress_timeout_seconds"] = capture_seconds
     diagnostics["open_wait_ms"] = COMMENT_OPEN_WAIT_MS
     diagnostics["render_wait_ms"] = COMMENT_RENDER_WAIT_MS
     diagnostics["scroll_review_ms"] = COMMENT_SCROLL_REVIEW_MS
