@@ -717,11 +717,34 @@ class LocalJobRunner:
         )
         baseline, baseline_path = _load_comment_baseline(comments_root)
         run_directory = _allocate_timestamp_dir(comments_root)
+        manifest_path = run_directory / COMMENT_MANIFEST_FILENAME
+        checkpoint_path = run_directory / "comments-checkpoint.jsonl"
+        _atomic_json(
+            manifest_path,
+            {
+                "schema_version": 1,
+                "video_id": video_id,
+                "mode": mode,
+                "status": "running",
+                "usable_as_baseline": False,
+                "baseline_file": (
+                    _relative(baseline_path, comments_root) if baseline_path else None
+                ),
+                "snapshot_file": checkpoint_path.name,
+                "incremental_file": None,
+                "export_file": None,
+                "stats": None,
+                "diagnostics": {
+                    "checkpoint_policy": "atomic-after-each-progress-response"
+                },
+            },
+        )
         result: CollectionResult = self.comment_collector(
             video_id=video_id,
             video_url=str(video["video_url"]),
             video_title=str(video["title"]),
             batches_dir=run_directory,
+            checkpoint_path=checkpoint_path,
             browser_profile_dir=self.settings.browser_profile_dir,
             capture_seconds=self.settings.browser_capture_seconds,
             trigger="manual",
@@ -738,25 +761,25 @@ class LocalJobRunner:
             else utc_now()
         )
         usable = result.status in {"complete", "partial"}
+        deliverable = usable or bool(snapshot_records)
         snapshot_path = result.batch_path
-        if usable and snapshot_path is None:
+        if deliverable and snapshot_path is None:
             snapshot_path = run_directory / "comments-full.jsonl"
             _atomic_jsonl(snapshot_path, snapshot_records)
 
         delta_path: Path | None = None
-        export_source = snapshot_path
+        export_source = snapshot_path if deliverable else None
         if usable:
             _atomic_jsonl(comments_root / COMMENT_INDEX_FILENAME, canonical_records)
-            if mode == "incremental":
-                snapshot_stem = snapshot_path.stem if snapshot_path else "comments"
-                delta_path = run_directory / f"{snapshot_stem}-incremental.jsonl"
-                _atomic_jsonl(delta_path, delta_records)
-                export_source = delta_path
             self.store.record_comment_export(
                 video_id, count=count, exported_at=exported_at
             )
+        if usable and mode == "incremental":
+            snapshot_stem = snapshot_path.stem if snapshot_path else "comments"
+            delta_path = run_directory / f"{snapshot_stem}-incremental.jsonl"
+            _atomic_jsonl(delta_path, delta_records)
+            export_source = delta_path
 
-        manifest_path = run_directory / COMMENT_MANIFEST_FILENAME
         _atomic_json(
             manifest_path,
             {
@@ -770,7 +793,7 @@ class LocalJobRunner:
                 ),
                 "snapshot_file": snapshot_path.name if snapshot_path else None,
                 "incremental_file": delta_path.name if delta_path else None,
-                "export_file": export_source.name if export_source and usable else None,
+                "export_file": export_source.name if export_source else None,
                 "stats": increment,
                 "diagnostics": dict(result.diagnostics),
             },
@@ -783,7 +806,7 @@ class LocalJobRunner:
             if isinstance(preferences, Mapping)
             else None
         )
-        if export_source and usable:
+        if export_source:
             try:
                 export_root = prepare_comment_export_directory(
                     str(configured_directory or ""), self.settings
@@ -803,12 +826,14 @@ class LocalJobRunner:
             "status": result.status,
             "mode": mode,
             "count": count,
-            "export_count": len(delta_records) if mode == "incremental" else count,
+            "export_count": (
+                len(delta_records) if usable and mode == "incremental" else count
+            ),
             **increment,
             "directory": _relative(run_directory, self.settings.data_home),
             "file": (
                 _relative(export_source, self.settings.data_home)
-                if export_source and usable
+                if export_source
                 else None
             ),
             "snapshot_file": (
@@ -849,6 +874,22 @@ class LocalJobRunner:
                     f"{message}；{increment['not_observed_count']} 条历史评论"
                     f"{qualifier}，未从本地索引删除"
                 )
+        elif deliverable:
+            if mode == "incremental":
+                message = (
+                    f"{message}；已保留截至失败点的 {count} 条有效记录，"
+                    f"相对上次完整基线新增 {increment['new_count']} 条，"
+                    f"更新 {increment['updated_count']} 条，"
+                    f"未变化 {increment['unchanged_count']} 条"
+                )
+                if increment["context_count"]:
+                    message = (
+                        f"{message}，附带关系上下文 "
+                        f"{increment['context_count']} 条"
+                    )
+            else:
+                message = f"{message}；已保留截至失败点的 {count} 条有效记录"
+            message = f"{message}；采集不完整，未更新增量基线"
         if external_file:
             message = f"{message}；已导出到 {external_file.parent}"
         elif export_warning:

@@ -393,6 +393,10 @@ class ResponseAccumulator:
     def observed_count(self) -> int:
         return len(self._comments)
 
+    @property
+    def response_count(self) -> int:
+        return self._root_pages + self._reply_pages
+
     def set_page_title(self, title: str) -> None:
         title = title.strip()
         if title and not self.video_title:
@@ -838,6 +842,17 @@ class ResponseAccumulator:
         }
 
 
+def _write_capture_checkpoint(
+    accumulator: ResponseAccumulator, checkpoint_path: Path
+) -> int:
+    """Atomically retain every currently valid record during a live capture."""
+    records = accumulator.assessment().records
+    if not records:
+        return 0
+    write_jsonl_atomic(checkpoint_path, records)
+    return len(records)
+
+
 def _validate_browser_profile_dir(profile: Path) -> None:
     require_safe_runtime_path(
         profile,
@@ -873,42 +888,114 @@ def _page_blocker(page: Any) -> str | None:
     return None
 
 
-def _drive_comment_view(page: Any) -> int:
-    """Click one expansion or scroll, preserving click-read alternation."""
-    try:
-        matches = page.get_by_text(EXPAND_TEXT_RE)
-        visible_count = min(matches.count(), MAX_EXPANSION_SCAN)
-        # Work backwards because each successful expansion can remove its own
-        # control and shift the remaining live locator indexes.
-        for index in range(visible_count - 1, -1, -1):
-            candidate = matches.nth(index)
-            if candidate.is_visible():
-                try:
-                    candidate.click(timeout=350)
-                    return 1
-                except Exception:
-                    pass
-    except Exception:
-        pass
-    try:
-        page.mouse.wheel(0, 1_800)
-        page.evaluate(
-            """
-            () => {
-              window.scrollBy(0, 900);
-              for (const element of document.querySelectorAll('*')) {
-                const style = getComputedStyle(element);
-                if ((style.overflowY === 'auto' || style.overflowY === 'scroll') &&
-                    element.scrollHeight > element.clientHeight + 100) {
-                  element.scrollTop += Math.max(900, element.clientHeight * 0.9);
+@dataclass(slots=True)
+class _CommentViewDriver:
+    """Rotate reply controls and defer clicks that yield no comment response."""
+
+    cursor: int = 0
+    deferred_controls: set[str] = field(default_factory=set)
+    pending_control: str | None = None
+    click_count: int = 0
+    no_progress_click_count: int = 0
+    rotation_count: int = 0
+
+    @staticmethod
+    def _control_key(candidate: Any, index: int) -> str:
+        try:
+            key = candidate.evaluate(
+                """
+                element => {
+                  if (!window.__csiOpenbaseControlSequence) {
+                    window.__csiOpenbaseControlSequence = 0;
+                  }
+                  if (!element.__csiOpenbaseControlId) {
+                    window.__csiOpenbaseControlSequence += 1;
+                    Object.defineProperty(element, '__csiOpenbaseControlId', {
+                      value: `reply-${window.__csiOpenbaseControlSequence}`
+                    });
+                  }
+                  return element.__csiOpenbaseControlId;
                 }
-              }
-            }
-            """
-        )
-    except Exception:
-        pass
-    return 0
+                """
+            )
+            if key:
+                return str(key)
+        except Exception:
+            pass
+        return f"index-{index}"
+
+    def drive(self, page: Any) -> int:
+        """Click one eligible control or scroll after a bounded rotating scan."""
+        self.pending_control = None
+        try:
+            matches = page.get_by_text(EXPAND_TEXT_RE)
+            total_count = matches.count()
+            scan_count = min(total_count, MAX_EXPANSION_SCAN)
+            if total_count > 0:
+                start = self.cursor % total_count
+                for offset in range(scan_count):
+                    index = (start + offset) % total_count
+                    self.cursor = (index + 1) % total_count
+                    candidate = matches.nth(index)
+                    if not candidate.is_visible():
+                        continue
+                    key = self._control_key(candidate, index)
+                    if key in self.deferred_controls:
+                        continue
+                    try:
+                        candidate.click(timeout=350)
+                    except Exception:
+                        self.deferred_controls.add(key)
+                        continue
+                    self.pending_control = key
+                    self.click_count += 1
+                    return 1
+        except Exception:
+            pass
+        self._scroll(page)
+        self.rotation_count += 1
+        self.deferred_controls.clear()
+        return 0
+
+    def observe_click_result(self, *, response_received: bool) -> None:
+        key = self.pending_control
+        self.pending_control = None
+        if key is None:
+            return
+        if response_received:
+            # A changed page can make previously inert controls productive.
+            self.deferred_controls.clear()
+            return
+        self.deferred_controls.add(key)
+        self.no_progress_click_count += 1
+
+    @staticmethod
+    def _scroll(page: Any) -> None:
+        try:
+            page.mouse.wheel(0, 1_800)
+            page.evaluate(
+                """
+                () => {
+                  window.scrollBy(0, 900);
+                  for (const element of document.querySelectorAll('*')) {
+                    const style = getComputedStyle(element);
+                    if ((style.overflowY === 'auto' || style.overflowY === 'scroll') &&
+                        element.scrollHeight > element.clientHeight + 100) {
+                      element.scrollTop += Math.max(900, element.clientHeight * 0.9);
+                    }
+                  }
+                }
+                """
+            )
+        except Exception:
+            pass
+
+
+def _drive_comment_view(
+    page: Any, driver: _CommentViewDriver | None = None
+) -> int:
+    """Compatibility wrapper for one click-read or scroll interaction."""
+    return (driver or _CommentViewDriver()).drive(page)
 
 
 def _human_plus_30_read_ms(new_records: int) -> int:
@@ -964,6 +1051,7 @@ def collect_video(
     video_url: str | None = None,
     video_title: str = "",
     batches_dir: Path | None = None,
+    checkpoint_path: Path | None = None,
     browser_profile_dir: Path | None = None,
     capture_seconds: int = DEFAULT_NO_PROGRESS_SECONDS,
     trigger: str = "auto",
@@ -1000,6 +1088,15 @@ def collect_video(
     assert localized is not None
     day = localized.strftime("%Y-%m-%d")
     batch_name = f"{day}-{video_id}-{trigger}-{uuid.uuid4().hex[:10]}"
+    checkpoint = (
+        checkpoint_path
+        if checkpoint_path is not None
+        else batches / f"{batch_name}-checkpoint.jsonl"
+    ).resolve()
+    if checkpoint.parent != batches:
+        raise ValueError("comment checkpoint must stay inside the batch directory")
+    if checkpoint.exists() and (checkpoint.is_symlink() or not checkpoint.is_file()):
+        raise ValueError("comment checkpoint must be a regular file")
     accumulator = ResponseAccumulator(
         video_id=video_id,
         video_url=url,
@@ -1009,6 +1106,8 @@ def collect_video(
     )
 
     browser_failure: str | None = None
+    checkpoint_writes = 0
+    view_driver: _CommentViewDriver | None = None
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -1023,14 +1122,27 @@ def collect_video(
                     page = context.pages[0] if context.pages else context.new_page()
 
                     def handle_response(response: Any) -> None:
+                        nonlocal checkpoint_writes
                         if not _is_relevant_comment_response(str(response.url)):
                             return
+                        observed_before = accumulator.observed_count
                         try:
                             accumulator.consume(response.url, response.json())
                         except Exception as exc:
                             accumulator.add_error(
                                 "A recognized response could not be decoded: "
                                 f"{type(exc).__name__}"
+                            )
+                            return
+                        if accumulator.observed_count <= observed_before:
+                            return
+                        try:
+                            if _write_capture_checkpoint(accumulator, checkpoint):
+                                checkpoint_writes += 1
+                        except Exception as exc:
+                            accumulator.add_error(
+                                "Capture checkpoint could not be written: "
+                                f"{type(exc).__name__}: {exc}"
                             )
 
                     page.on("response", handle_response)
@@ -1045,6 +1157,7 @@ def collect_video(
                         observed_count=accumulator.observed_count,
                         now=time.monotonic(),
                     )
+                    view_driver = _CommentViewDriver()
                     complete_streak = 0
                     active_blocker: str | None = None
                     while True:
@@ -1064,7 +1177,8 @@ def collect_video(
                             continue
                         active_blocker = None
                         observed_before = accumulator.observed_count
-                        expanded = _drive_comment_view(page)
+                        response_before = accumulator.response_count
+                        expanded = _drive_comment_view(page, view_driver)
                         page.wait_for_timeout(COMMENT_RENDER_WAIT_MS)
                         if expanded:
                             page.wait_for_timeout(
@@ -1074,6 +1188,11 @@ def collect_video(
                             )
                         else:
                             page.wait_for_timeout(COMMENT_SCROLL_REVIEW_MS)
+                        view_driver.observe_click_result(
+                            response_received=(
+                                accumulator.response_count > response_before
+                            )
+                        )
                         progress_watchdog.observe(
                             accumulator.observed_count,
                             now=time.monotonic(),
@@ -1109,6 +1228,8 @@ def collect_video(
     if records:
         batch_path = batches / f"{batch_name}.jsonl"
         write_jsonl_atomic(batch_path, records)
+        if checkpoint != batch_path:
+            checkpoint.unlink(missing_ok=True)
 
     diagnostics = accumulator.diagnostics(records, warnings=warnings)
     diagnostics["batch_name"] = batch_name
@@ -1122,6 +1243,15 @@ def collect_video(
     diagnostics["read_base_ms"] = COMMENT_READ_BASE_MS
     diagnostics["read_per_comment_ms"] = COMMENT_READ_PER_COMMENT_MS
     diagnostics["read_max_ms"] = COMMENT_READ_MAX_MS
+    diagnostics["checkpoint_writes"] = checkpoint_writes
+    diagnostics["checkpoint_policy"] = "atomic-after-each-progress-response"
+    diagnostics["reply_control_clicks"] = view_driver.click_count if view_driver else 0
+    diagnostics["reply_control_no_progress_clicks"] = (
+        view_driver.no_progress_click_count if view_driver else 0
+    )
+    diagnostics["reply_control_rotations"] = (
+        view_driver.rotation_count if view_driver else 0
+    )
     message = _capture_message(
         status,
         len(records),

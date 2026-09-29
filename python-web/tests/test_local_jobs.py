@@ -244,6 +244,14 @@ def test_comment_export_is_timestamped_and_records_user_trigger(tmp_path: Path) 
     def fake_comments(**kwargs: Any) -> CollectionResult:
         assert kwargs["trigger"] == "manual"
         directory = Path(kwargs["batches_dir"])
+        checkpoint = Path(kwargs["checkpoint_path"])
+        assert checkpoint == directory / "comments-checkpoint.jsonl"
+        running_manifest = json.loads(
+            (directory / "manifest.json").read_text(encoding="utf-8")
+        )
+        assert running_manifest["status"] == "running"
+        assert running_manifest["usable_as_baseline"] is False
+        assert running_manifest["snapshot_file"] == checkpoint.name
         path = directory / "comments.jsonl"
         record = {
             "video_id": VIDEO_ID,
@@ -562,6 +570,112 @@ def test_blocked_comment_retry_does_not_replace_last_success(tmp_path: Path) -> 
 
     video = store.get_video(VIDEO_ID)
     assert video["comment_count"] == 27
+    assert video["last_comment_export_at"] == "2026-09-07T01:00:00Z"
+
+
+def test_blocked_comment_capture_exports_progress_without_replacing_baseline(
+    tmp_path: Path,
+) -> None:
+    settings = make_settings(tmp_path)
+    store = LocalStore(settings.database_path)
+    external_root = tmp_path / "comment-exports"
+    store.set_meta(
+        LOCAL_PREFERENCES_META_KEY,
+        {COMMENT_EXPORT_DIRECTORY_KEY: str(external_root)},
+    )
+    store.upsert_videos(
+        [
+            {
+                "video_id": VIDEO_ID,
+                "title": "测试视频",
+                "video_url": f"https://www.douyin.com/video/{VIDEO_ID}",
+                "manifest_path": f"works/videos/douyin/{VIDEO_ID}/manifest.json",
+                "first_seen_at": "2026-09-07T00:00:00Z",
+                "last_seen_at": "2026-09-07T00:00:00Z",
+            }
+        ]
+    )
+    comments_root = (
+        settings.works_dir / "videos" / "douyin" / VIDEO_ID / "comments"
+    )
+    comments_root.mkdir(parents=True)
+    baseline_record = {
+        "platform": "douyin",
+        "video_id": VIDEO_ID,
+        "comment_id": "comment-old",
+        "comment_type": "root",
+        "parent_comment_id": None,
+        "root_comment_id": None,
+        "text": "已有完整基线",
+        "collected_at": "2026-09-07T01:00:00Z",
+    }
+    canonical_path = comments_root / "comments.jsonl"
+    canonical_path.write_text(
+        json.dumps(baseline_record, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    store.record_comment_export(
+        VIDEO_ID,
+        count=1,
+        exported_at="2026-09-07T01:00:00Z",
+    )
+
+    captured_record = {
+        "platform": "douyin",
+        "video_id": VIDEO_ID,
+        "comment_id": "comment-new",
+        "comment_type": "root",
+        "parent_comment_id": None,
+        "root_comment_id": None,
+        "text": "失败前已经采集",
+        "collected_at": "2026-09-08T01:00:00Z",
+    }
+
+    def blocked_with_progress(**kwargs: Any) -> CollectionResult:
+        path = Path(kwargs["batches_dir"]) / "blocked-snapshot.jsonl"
+        path.write_text(
+            json.dumps(captured_record, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        return CollectionResult(
+            status="blocked",
+            message="回复分页未完成",
+            video_id=VIDEO_ID,
+            records=(captured_record,),
+            batch_path=path,
+            diagnostics={"root_pagination_closed": True},
+        )
+
+    runner = LocalJobRunner(
+        store, settings, comment_collector=blocked_with_progress
+    )
+    try:
+        job = runner.submit("comments", video_id=VIDEO_ID, mode="incremental")
+        finished = wait_for_job(store, job["id"])
+    finally:
+        runner.close()
+
+    assert finished["status"] == "blocked"
+    assert finished["result"]["export_count"] == 1
+    assert finished["result"]["file"].endswith("blocked-snapshot.jsonl")
+    assert "已保留截至失败点的 1 条有效记录" in finished["message"]
+    assert "未更新增量基线" in finished["message"]
+    external_file = Path(finished["result"]["export_file"])
+    assert external_file.is_file()
+    exported = [
+        json.loads(line)
+        for line in external_file.read_text(encoding="utf-8").splitlines()
+    ]
+    assert [record["comment_id"] for record in exported] == ["comment-new"]
+    assert json.loads(canonical_path.read_text(encoding="utf-8"))["comment_id"] == (
+        "comment-old"
+    )
+    manifest_path = settings.data_home / finished["result"]["manifest"]
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["usable_as_baseline"] is False
+    assert manifest["incremental_file"] is None
+    assert manifest["export_file"].endswith("blocked-snapshot.jsonl")
+    video = store.get_video(VIDEO_ID)
+    assert video["comment_count"] == 1
     assert video["last_comment_export_at"] == "2026-09-07T01:00:00Z"
 
 

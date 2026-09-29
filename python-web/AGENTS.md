@@ -53,13 +53,18 @@ its imported commit in `python-web/UPSTREAM.md`.
   and stop as soon as strict completeness stabilizes. Performance changes must
   not weaken root/reply pagination, relationship, or aggregate-count validation.
   Do not impose a fixed total capture duration: every newly observed comment or
-  reply resets the bounded no-progress watchdog.
+  reply resets the bounded no-progress watchdog. Rotate visible reply controls;
+  a click that yields no comment response must be deferred while other controls
+  are attempted, with scrolling between complete passes.
 - Keep incremental comment delivery separate from collection completeness.
-  Every run retains a complete observed snapshot; incremental files contain
-  only new or materially changed records plus required relationship context
-  relative to the per-video canonical index. Ignore collection timestamps when
-  detecting changes, never delete an unseen historical comment automatically,
-  and never promote a blocked run to the canonical baseline.
+  Atomically checkpoint every valid progress response from the first observed
+  comment onward. Every terminal run retains its observed snapshot;
+  incremental files contain only new or materially changed records plus
+  required relationship context relative to the per-video canonical index.
+  A blocked run with records remains exportable but must stay visibly
+  incomplete and must never replace the canonical baseline or successful-export
+  metadata. Ignore collection timestamps when detecting changes and never
+  delete an unseen historical comment automatically.
 - Keep stored/database timestamps normalized to UTC, but render every
   user-visible timestamp and generate date-based archive/export directories in
   fixed Beijing time (`UTC+08:00`), independent of the host system timezone.

@@ -16,17 +16,18 @@ from admin_app.collector import (
     COMMENT_READ_MAX_MS,
     COMMENT_RENDER_WAIT_MS,
     COMMENT_SCROLL_REVIEW_MS,
-    MAX_EXPANSION_SCAN,
     TARGET_HUMAN_SPEED_PERCENT,
     CollectionResult,
     EXPAND_TEXT_RE,
     ResponseAccumulator,
+    _CommentViewDriver,
     _NoProgressWatchdog,
     _drive_comment_view,
     _human_plus_30_read_ms,
     _is_relevant_comment_response,
     _launch_persistent_context,
     _validate_browser_profile_dir,
+    _write_capture_checkpoint,
 )
 from admin_app.config import Settings
 from admin_app.archive_lock import archive_lock
@@ -142,6 +143,45 @@ def _accumulator(
             },
         )
     return accumulator
+
+
+def test_capture_checkpoint_persists_each_valid_progress_state(
+    tmp_path: Path,
+) -> None:
+    accumulator = _accumulator(declared_replies=1, include_reply=False)
+    checkpoint = tmp_path / "comments-checkpoint.jsonl"
+
+    assert _write_capture_checkpoint(accumulator, checkpoint) == 1
+    first = [
+        json.loads(line)
+        for line in checkpoint.read_text(encoding="utf-8").splitlines()
+    ]
+    assert [record["comment_id"] for record in first] == [ROOT_ID]
+
+    accumulator.consume(
+        "https://www.douyin.com/aweme/v1/web/comment/list/reply/"
+        f"?aweme_id={VIDEO_ID}&comment_id={ROOT_ID}",
+        {
+            "status_code": 0,
+            "has_more": False,
+            "comments": [
+                {
+                    "cid": REPLY_ID,
+                    "aweme_id": VIDEO_ID,
+                    "root_comment_id": ROOT_ID,
+                    "text": "后来加载的回复",
+                    "user": {"uid": "viewer-reply"},
+                }
+            ],
+        },
+    )
+
+    assert _write_capture_checkpoint(accumulator, checkpoint) == 2
+    second = [
+        json.loads(line)
+        for line in checkpoint.read_text(encoding="utf-8").splitlines()
+    ]
+    assert [record["comment_id"] for record in second] == [ROOT_ID, REPLY_ID]
 
 
 def _accumulator_with_counts(
@@ -969,9 +1009,65 @@ def test_comment_driver_expands_and_scrolls() -> None:
     expanded = _drive_comment_view(Page())
 
     assert expanded == 1
-    assert clicked == [MAX_EXPANSION_SCAN - 1]
+    assert clicked == [0]
     assert wheels == []
     assert evaluations == []
+
+
+def test_comment_driver_rotates_away_from_controls_without_responses() -> None:
+    clicked: list[int] = []
+    wheels: list[tuple[int, int]] = []
+    candidates: list[Any] = []
+
+    class Candidate:
+        def __init__(self, index: int) -> None:
+            self.index = index
+
+        def is_visible(self) -> bool:
+            return True
+
+        def evaluate(self, _script: str) -> str:
+            return f"control-{self.index}"
+
+        def click(self, *, timeout: int) -> None:
+            assert timeout == 350
+            clicked.append(self.index)
+
+    candidates.extend(Candidate(index) for index in range(3))
+
+    class Matches:
+        def count(self) -> int:
+            return len(candidates)
+
+        def nth(self, index: int) -> Any:
+            return candidates[index]
+
+    class Mouse:
+        def wheel(self, x: int, y: int) -> None:
+            wheels.append((x, y))
+
+    class Page:
+        mouse = Mouse()
+
+        def get_by_text(self, _pattern: Any) -> Matches:
+            return Matches()
+
+        def evaluate(self, _script: str) -> None:
+            return None
+
+    page = Page()
+    driver = _CommentViewDriver()
+    for expected in range(3):
+        assert _drive_comment_view(page, driver) == 1
+        assert clicked[-1] == expected
+        driver.observe_click_result(response_received=False)
+
+    assert driver.no_progress_click_count == 3
+    assert _drive_comment_view(page, driver) == 0
+    assert wheels == [(0, 1_800)]
+    assert driver.rotation_count == 1
+    assert _drive_comment_view(page, driver) == 1
+    assert clicked[-1] == 0
 
 
 def test_comment_driver_scrolls_only_when_no_expansion_is_visible() -> None:
