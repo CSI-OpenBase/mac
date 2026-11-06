@@ -34,6 +34,7 @@
   <main>
     <section class="overview-band">
       <div>
+        <p class="studio-kicker">CREATOR'S DESK / 创作工作台</p>
         <h1>本地归档</h1>
         <p class="path" title="{{ data_home }}">{{ data_home }}</p>
       </div>
@@ -131,7 +132,7 @@
           <button class="button button-secondary" type="submit" form="comment-batch" formaction="/groups/videos/add"><i data-lucide="folder-input" aria-hidden="true"></i><span>加入</span></button>
           {% endif %}
           {% if videos and selected_group and selected_group.source == 'manual' %}<button class="button button-secondary" type="submit" form="comment-batch" formaction="/groups/videos/remove"><i data-lucide="folder-output" aria-hidden="true"></i><span>移出分组</span></button>{% endif %}
-          {% if videos %}<button class="button button-secondary" type="submit" form="comment-batch" name="mode" value="incremental"><i data-lucide="message-square-down" aria-hidden="true"></i><span>增量导出所选</span></button><button class="icon-button" type="submit" form="comment-batch" name="mode" value="full" title="完整同步所选评论"><i data-lucide="refresh-ccw" aria-hidden="true"></i><span class="sr-only">完整同步所选评论</span></button>{% endif %}
+          {% if videos %}<button class="button button-secondary" type="submit" form="comment-batch" name="mode" value="incremental"><i data-lucide="message-square-text" aria-hidden="true"></i><span>增量导出所选</span></button><button class="icon-button" type="submit" form="comment-batch" name="mode" value="full" title="完整同步所选评论"><i data-lucide="refresh-ccw" aria-hidden="true"></i><span class="sr-only">完整同步所选评论</span></button>{% endif %}
         </div>
       </div>
       <form method="post" action="/comments/batch" id="comment-batch">
@@ -163,7 +164,7 @@
                     {% endif %}
                   </span>
                 </td>
-                <td class="action-cell"><div class="video-actions"><button type="submit" class="button button-secondary comment-count-button" formmethod="post" formaction="/videos/{{ video.video_id }}/comment-count" title="仅更新评论数量，不导出评论内容"><i data-lucide="refresh-cw" aria-hidden="true"></i><span>获取最新评论</span></button><button type="submit" class="button button-secondary comment-export-button" formmethod="post" formaction="/videos/{{ video.video_id }}/comments" title="导出相对本地索引新增或发生变化的评论"><i data-lucide="message-square-down" aria-hidden="true"></i><span>导出评论</span></button><button type="submit" class="icon-button" formmethod="post" formaction="/videos/{{ video.video_id }}/comments/full" title="完整重新同步评论"><i data-lucide="refresh-ccw" aria-hidden="true"></i><span class="sr-only">完整重新同步评论</span></button></div></td>
+                <td class="action-cell"><div class="video-actions"><button type="submit" class="button button-secondary comment-count-button" formmethod="post" formaction="/videos/{{ video.video_id }}/comment-count" title="仅更新评论数量，不导出评论内容"><i data-lucide="refresh-cw" aria-hidden="true"></i><span>获取最新评论</span></button><button type="submit" class="button button-secondary comment-export-button" formmethod="post" formaction="/videos/{{ video.video_id }}/comments" title="导出相对本地索引新增或发生变化的评论"><i data-lucide="message-square-text" aria-hidden="true"></i><span>导出评论</span></button><button type="submit" class="icon-button" formmethod="post" formaction="/videos/{{ video.video_id }}/comments/full" title="完整重新同步评论"><i data-lucide="refresh-ccw" aria-hidden="true"></i><span class="sr-only">完整重新同步评论</span></button></div></td>
               </tr>
               {% else %}
               <tr><td colspan="8" class="empty">暂无视频档案</td></tr>
